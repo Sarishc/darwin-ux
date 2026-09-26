@@ -1,0 +1,70 @@
+# DarwinUX .gitignore
+# Rule of thumb: ignore what a tool regenerates or what is personal/secret.
+# Lockfiles (uv.lock, package-lock.json, .terraform.lock.hcl) ARE committed.
+
+# ---- Environment / secrets -------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ---- Python ----------------------------------------------------------------
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# ---- Node / Next.js --------------------------------------------------------
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+npm-debug.log*
+
+# ---- Terraform -------------------------------------------------------------
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+# tfvars often hold environment-specific or secret values; commit *.tfvars.example instead
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# ---- Local artefacts -------------------------------------------------------
+*.log
+logs/
+tmp/
+.tmp/
+.cache/
+
+# ---- OS / editors ----------------------------------------------------------
+.DS_Store
+.AppleDouble
+._*
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ---- AI coding tools (personal, machine-local settings only) ---------------
+.claude/settings.local.json

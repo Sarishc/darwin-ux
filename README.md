@@ -12,9 +12,9 @@ It is not a chatbot wrapper. It is a closed-loop system where software evolves t
 
 ## Status
 
-**Step 0 — Architecture & Documentation**
+**Step 1 — Development Environment** (Step 0 architecture complete)
 
-No application code exists yet. This repository contains only architectural documentation, domain modeling, and design decisions that will guide implementation.
+No application code exists yet. The repository contains architectural documentation and the local toolchain configuration. To set up a machine, see [DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## The Evolution Loop
 
@@ -75,6 +75,7 @@ All architectural documentation lives in [`docs/`](docs/):
 | [OBSERVABILITY.md](docs/OBSERVABILITY.md) | Multi-level observability strategy |
 | [ROADMAP.md](docs/ROADMAP.md) | Phased implementation plan |
 | [OPEN_QUESTIONS.md](docs/OPEN_QUESTIONS.md) | Blocking, non-blocking, and research questions |
+| [DEVELOPMENT.md](docs/DEVELOPMENT.md) | Local toolchain, environment variables, commands |
 
 ## Learning Goals
 

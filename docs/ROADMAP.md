@@ -6,7 +6,7 @@ Each step is a thin, working vertical slice with an explicit **exit criterion**.
 
 Mocks come first for anything whose real integration is unknown (Jev, Muse). The system is built and evaluated against those mocks and against LLM baselines, then the real providers are plugged in behind the same ports.
 
-Operational telemetry (OpenTelemetry) is added from Step 1 in minimal form and deepened as components appear.
+Operational telemetry (OpenTelemetry) is added with the first running process (Step 2a) in minimal form and deepened as components appear.
 
 ## Steps
 
@@ -16,11 +16,20 @@ Documents in `docs/`. No code, no dependencies, no infrastructure.
 
 **Exit:** all documents exist, are consistent, and open questions are recorded.
 
-### Step 1 — Foundations
+### Step 1 — Development Environment
 
-- Repository skeleton matching ARCHITECTURE.md (`backend/`, `frontend/`, `infrastructure/`).
-- Python project, FastAPI app with health endpoint, Pydantic settings.
-- `docker compose` with Postgres + pgvector.
+- Toolchain decisions: Python 3.13, uv, Ruff, mypy, pytest, Node 24 LTS (docs/DEVELOPMENT.md).
+- `backend/pyproject.toml` (metadata + tool config, no runtime dependencies), `.python-version`, `.nvmrc`.
+- `.gitignore`, `.editorconfig`, `.env.example` with the environment-variable strategy.
+- Local-service strategy documented, not implemented.
+
+**Learn:** reproducible environments, lockfiles, the distinct jobs of formatter/linter/type checker/test runner, secret hygiene.
+**Exit:** after the documented manual installs, `uv sync` succeeds and `.env` is provably git-ignored.
+
+### Step 2a — Backend Foundations
+
+- Package skeleton `backend/src/darwin/` matching ARCHITECTURE.md; FastAPI app with health endpoint; Pydantic settings reading `.env`.
+- `compose.yaml` with Postgres + pgvector; Makefile wrapping the real commands.
 - Pure domain models (Pydantic) and state-transition rules, with unit tests.
 - CI: format, lint, type check, unit tests.
 - Minimal OpenTelemetry on the API.
@@ -28,7 +37,7 @@ Documents in `docs/`. No code, no dependencies, no infrastructure.
 **Learn:** project structure, dependency rules, Pydantic modelling, state machines, CI basics.
 **Exit:** `docker compose up` + tests green in CI; illegal state transitions fail tests.
 
-### Step 2 — Behavioral Telemetry Pipeline + Generation 0
+### Step 2b — Behavioral Telemetry Pipeline + Generation 0
 
 - Demo target app (Next.js `/demo`) rendering from a seeded **UI Spec** via a component registry — Generation 0, with deliberate friction.
 - Telemetry SDK + `POST /api/v1/telemetry/events` (202) → queue emulator → telemetry worker.

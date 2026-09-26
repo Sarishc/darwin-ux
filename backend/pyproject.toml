@@ -1,0 +1,45 @@
+[project]
+name = "darwin-ux-backend"
+version = "0.0.0"
+description = "DarwinUX backend: API, workers, and AI subsystems (not implemented yet)."
+requires-python = ">=3.13,<3.14"
+# Runtime dependencies are intentionally empty until Step 2.
+dependencies = []
+
+[dependency-groups]
+# Declared, not installed. `uv sync` installs them once uv is available.
+dev = [
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "pytest>=8.3",
+]
+
+[tool.uv]
+# No importable package exists yet (src/darwin/ arrives in Step 2), so uv
+# manages only the environment and dependencies, without building anything.
+package = false
+
+# ---- Ruff: formatter + linter ---------------------------------------------
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes (unused imports, undefined names)
+    "I",   # import sorting
+    "B",   # bugbear (likely bugs)
+    "UP",  # pyupgrade (modern syntax for the target version)
+]
+
+# ---- mypy: type checker ----------------------------------------------------
+[tool.mypy]
+python_version = "3.13"
+strict = true
+
+# ---- pytest: test runner ---------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"

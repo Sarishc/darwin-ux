@@ -342,6 +342,9 @@ This is a **DarwinUX-owned port**, not Muse's API. `MutationContext` carries the
 ```
 darwin-ux/
 ├── README.md
+├── compose.yaml                   # Local services (Step 2+): Postgres+pgvector, SQS emulator, OTel collector
+├── .env.example                   # Committed env template; real values go in git-ignored .env
+├── .nvmrc  .editorconfig  .gitignore
 ├── docs/                          # Architecture & design documentation
 │   ├── PRODUCT.md
 │   ├── ARCHITECTURE.md
@@ -350,7 +353,8 @@ darwin-ux/
 │   └── decisions/                 # Architecture Decision Records (added from Step 1 on)
 │
 ├── backend/                       # Python platform (FastAPI)
-│   ├── pyproject.toml
+│   ├── pyproject.toml             # uv-managed; tool config for Ruff, mypy, pytest
+│   ├── .python-version            # 3.13
 │   ├── src/
 │   │   └── darwin/
 │   │       ├── api/               # FastAPI routers, middleware, deps
@@ -381,11 +385,10 @@ darwin-ux/
 │   └── Dockerfile
 │
 ├── infrastructure/                # Terraform + deployment
-│   ├── terraform/
-│   │   ├── environments/
-│   │   │   └── dev/               # One AWS environment first; add prod later
-│   │   └── modules/
-│   └── docker-compose.yml         # Local development (Postgres+pgvector, SQS emulator, OTel collector)
+│   └── terraform/
+│       ├── environments/
+│       │   └── dev/               # One AWS environment first; add prod later
+│       └── modules/
 │
 └── .github/
     └── workflows/                 # CI/CD
