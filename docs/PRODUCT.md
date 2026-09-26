@@ -20,12 +20,14 @@ The fundamental idea is biological evolution applied to user interfaces:
 1. **Observe** — Collect telemetry about how users actually interact with software.
 2. **Detect** — Identify behavioral signals that suggest UX friction (rage clicks, abandonment, repeated errors, slow task completion).
 3. **Research** — Retrieve relevant product knowledge, design guidelines, past experiments, and historical evidence from Product Memory (RAG).
-4. **Hypothesize** — AI agents propose why friction exists and what might improve it.
-5. **Mutate** — Generate a constrained UI change (a "mutation") that could address the hypothesis.
-6. **Evaluate** — Run AI evaluation to check the mutation for correctness, accessibility, safety, and alignment with design standards.
-7. **Experiment** — Deploy the mutation to a controlled subset of users (A/B test or similar).
-8. **Decide** — A combination of Jev (decision engine), AI evaluation, and human approval determines whether the mutation is promoted.
-9. **Learn** — Results feed back into Product Memory, improving future proposals.
+4. **Hypothesize** — The LangGraph workflow (one research agent plus structured LLM calls) proposes why friction exists and what might improve it.
+5. **Decide to act** — Jev gates whether the evidence is sufficient to proceed.
+6. **Mutate** — Muse generates a constrained candidate UI change (a "mutation") — a structured patch to a UI specification, never source code.
+7. **Evaluate** — Sandbox rendering, deterministic validation, and AI evaluation check the candidate for correctness, accessibility, safety, and alignment with design standards.
+8. **Approve** — Jev gates experiment readiness; a human approves before any user sees the change.
+9. **Experiment** — Expose the mutation to a controlled subset of users (A/B test) behind a feature flag. Guardrail breaches roll back automatically.
+10. **Promote or discard** — A human decides, based on pre-registered metrics, whether the mutation becomes the new default.
+11. **Learn** — Results (positive and negative) feed back into Product Memory, improving future proposals.
 
 Each complete cycle produces a new **Generation** — an explicit, traceable record of what changed, why, what evidence supported it, and what happened.
 
@@ -37,7 +39,8 @@ The Evolution Lab is a web interface for engineering and product teams to observ
 - **Mutations** — Proposed UI changes with before/after views.
 - **Experiments** — Active and completed A/B tests with results.
 - **Agent Runs** — What each agent did, what tools it called, what it decided.
-- **AI Decisions** — Jev's classifications, scores, and confidence levels.
+- **AI Decisions** — Jev's (and baseline deciders') outcomes and confidence levels.
+- **Muse Candidates** — What Muse generated, including rejected attempts and why they failed.
 - **Retrieved Evidence** — What Product Memory surfaced and why.
 - **Evaluation Results** — Scores across all evaluation dimensions.
 - **Monitoring** — System health, pipeline status, model performance.
@@ -47,7 +50,7 @@ The Evolution Lab is an observability and governance tool, not a design editor.
 ## Constraints
 
 ### Safety First
-- AI cannot autonomously deploy to production without human approval.
+- AI cannot autonomously expose a change to users or promote it without human approval. (Automatic *rollback* to a previous generation is allowed.)
 - AI cannot modify authentication, authorization, secrets, infrastructure, or CI/CD.
 - All mutations operate within a constrained surface (design tokens, feature flags, component configurations).
 
@@ -63,6 +66,10 @@ The Evolution Lab is an observability and governance tool, not a design editor.
 ### Incremental
 - Mutations are small, constrained changes — not wholesale redesigns.
 - The system evolves through many small improvements, not dramatic rewrites.
+
+## Target Application and Users
+
+DarwinUX needs something to evolve. Generation 0 is a small **demo target application** (for example a sign-up or checkout flow) that renders from a structured UI Spec, with deliberate, known UX friction. Because there are no real users, experiments initially run on a **synthetic user simulator**; simulated results are always labelled as such. See OPEN_QUESTIONS.md.
 
 ## Primary Learning Goals
 
@@ -84,10 +91,12 @@ This project is being built to develop hands-on AI engineering knowledge. The ar
 - RAG (ingestion, chunking, embeddings, retrieval, reranking, evaluation)
 - LLMs (prompt engineering, structured generation, provider abstraction)
 - LangChain (where genuinely useful — document loading, text splitting, chains)
-- LangGraph (stateful agent orchestration, conditional routing, human-in-the-loop)
+- LangGraph (stateful workflow orchestration, conditional routing, human-in-the-loop)
 - Tool calling (function calling, tool design, error handling)
 - AI agents (when to use them, when not to, agent evaluation)
-- Jev (decision-oriented AI, classification, scoring, gating)
+- Jev by TypeSafe AI (decision-oriented AI: classification, scoring, gating) — behind a provider boundary
+- Muse (generative mutation capability) — behind a provider boundary
+- Prompt management (versioned prompts, recorded on every model call)
 
 ### Evaluation
 - RAG evaluation (retrieval quality, context relevance, groundedness)
@@ -96,6 +105,7 @@ This project is being built to develop hands-on AI engineering knowledge. The ar
 - Mutation evaluation (functional correctness, accessibility, regression)
 
 ### Infrastructure & Operations
+- Next.js + TypeScript (Evolution Lab and demo target app)
 - AWS (ECS/Fargate, RDS, S3, SQS, ECR, IAM, Secrets Manager)
 - Terraform (infrastructure as code)
 - GitHub Actions (CI/CD pipelines)

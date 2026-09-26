@@ -41,7 +41,7 @@ graph LR
         CTX["Context Construction"]
     end
 
-    subgraph Generate["Generation"]
+    subgraph Consume["Consumption (LLM call)"]
         PROMPT["Prompt Assembly"]
         LLM["LLM Call"]
         VALIDATE["Output Validation"]
@@ -160,6 +160,8 @@ Similarity search against pgvector using the query embedding:
 
 #### 3. Metadata Filtering
 
+Hard filters (document type, `is_active`, component) are applied **inside** the vector query as SQL `WHERE` clauses — filtering after top-K can leave you with nothing. Soft preferences (recency, source credibility) are applied as score boosts afterwards.
+
 Filter retrieved chunks by metadata:
 - **Document type:** If investigating a design issue, prioritize design_doc and ux_guideline chunks over technical_doc chunks.
 - **Recency:** More recent experiment reports may be more relevant than old ones.
@@ -246,6 +248,22 @@ Knowledge documents become stale when their source changes. The system should:
 When multiple sources cover the same topic, retrieval may return near-duplicate chunks. Strategies:
 - **Source-level:** Prefer canonical sources (design system docs over blog posts about the design system).
 - **Chunk-level:** Detect high-similarity chunks during indexing and flag potential duplicates.
+
+### Trust and Injection
+
+Product Memory will contain text DarwinUX did not write: user feedback, support tickets, imported docs. That text ends up inside prompts for the Research agent, the hypothesis call, and Muse. Treat it as **untrusted data**:
+
+- Tag every chunk with a `trust_level` (official design system docs > internal notes > user-generated text).
+- Wrap retrieved content in clearly delimited context blocks; instructions inside retrieved text are never followed.
+- Constraints for Muse come from the component registry (code/config), **never** from retrieved text. Even a fully "convinced" Muse cannot produce a spec that passes deterministic validation if it touches a forbidden surface (MUTATION_SAFETY.md).
+
+### Feedback-Loop Hygiene
+
+DarwinUX indexes its own experiment reports and decisions. To avoid the system reinforcing its own mistakes:
+
+- System-generated documents carry `source_type` (e.g., `experiment_report`) and the experiment's `traffic_source` (real vs. simulated).
+- Negative results are indexed with equal prominence to positive ones.
+- Agent reasoning traces are indexed as *decisions*, not as *facts* — they are not retrievable as evidence for the claim they made.
 
 ### Growth Management
 

@@ -8,22 +8,25 @@ The domain model captures the core entities of DarwinUX: what they represent, ho
 
 ```mermaid
 erDiagram
-    UserEvent ||--o{ BehaviorSignal : "aggregated into"
+    UserEvent }o--o{ BehaviorSignal : "evidence for"
     BehaviorSignal ||--o{ AgentRun : "triggers"
-    AgentRun ||--|| RetrievalRun : "performs"
+    AgentRun ||--o{ RetrievalRun : "performs"
     AgentRun ||--o{ ModelCall : "makes"
+    AgentRun ||--o{ Decision : "records"
     AgentRun ||--o| Hypothesis : "produces"
-    RetrievalRun }o--|| KnowledgeChunk : "retrieves"
+    RetrievalRun }o--o{ KnowledgeChunk : "returns"
     KnowledgeDocument ||--|{ KnowledgeChunk : "split into"
-    Hypothesis ||--o| Mutation : "leads to"
+    Hypothesis ||--o{ Mutation : "leads to (retries)"
+    UISpecVersion ||--o{ Mutation : "is base of"
+    Mutation ||--o| UISpecVersion : "produces candidate"
     Mutation ||--o{ EvaluationRun : "evaluated by"
+    Mutation ||--o{ Approval : "approved via"
     Mutation ||--o| Experiment : "tested in"
-    AgentRun ||--o{ Decision : "produces"
-    Experiment ||--|| Generation : "produces"
-    Generation ||--o| Approval : "requires"
-    Approval ||--o| Deployment : "triggers"
+    Experiment ||--o| Generation : "may produce"
+    Generation ||--|| UISpecVersion : "activates"
+    Generation ||--o{ Deployment : "rolled out by"
     Deployment ||--o| Rollback : "may trigger"
-    Generation }o--|| Generation : "succeeds"
+    Generation |o--o| Generation : "parent of"
 ```
 
 ## Core Entities
@@ -37,7 +40,9 @@ A raw interaction event from the target application.
 | id | UUID | Unique identifier |
 | session_id | UUID | User session |
 | event_type | string | click, scroll, navigation, error, form_submit, etc. |
-| target | string | CSS selector or component identifier |
+| event_id | string | Client-generated idempotency key (dedupes SQS at-least-once redelivery) |
+| target | string | Stable component ID from the component registry (CSS selector only as fallback) |
+| ui_spec_version_id | UUID | Which UI Spec version (i.e., which experiment variant) the user was seeing |
 | metadata | JSON | Event-specific data (coordinates, timing, error details) |
 | timestamp | datetime | When the event occurred |
 | ingested_at | datetime | When DarwinUX received it |
@@ -64,6 +69,7 @@ An interpreted pattern derived from one or more UserEvents.
 | first_seen | datetime | When the pattern first appeared |
 | last_seen | datetime | Most recent occurrence |
 | status | enum | Lifecycle state |
+| detector_version | string | Which version of the deterministic rule produced it |
 
 **Why it exists:** Raw events are too granular for AI reasoning. BehaviorSignals are the unit of input to the agent system — they represent "something is wrong here" with enough context to investigate.
 
@@ -104,6 +110,7 @@ A segment of a KnowledgeDocument prepared for retrieval.
 | content | text | The chunk text |
 | chunk_index | int | Position within the document |
 | embedding | vector | Dense embedding for similarity search |
+| embedding_model | string | Which embedding model/version produced the vector (enables re-embedding) |
 | metadata | JSON | Source section, headings, tags |
 | token_count | int | For context window budgeting |
 
@@ -121,10 +128,12 @@ A record of a retrieval operation against Product Memory.
 |---|---|---|
 | id | UUID | Unique identifier |
 | query | text | The retrieval query |
-| agent_run_id | UUID | FK to the requesting AgentRun |
+| agent_run_id | UUID | FK to the requesting AgentRun (nullable — evaluation runs also retrieve) |
 | chunks_retrieved | list[UUID] | Ordered list of chunk IDs returned |
 | scores | list[float] | Relevance scores per chunk |
 | reranked | bool | Whether reranking was applied |
+| filters | JSON | Metadata filters applied |
+| retriever_version | string | Chunking/embedding/retrieval configuration version |
 | latency_ms | int | Total retrieval time |
 | timestamp | datetime | When retrieval occurred |
 
@@ -150,25 +159,31 @@ A complete execution of the agent orchestration graph.
 
 **Why it exists:** Agent runs are the unit of AI work. They must be fully traceable for debugging, evaluation, and cost accounting.
 
-**Lifecycle:** `started` → `running` → `completed` | `failed` | `timed_out`
+**Lifecycle:** `started` → `running` → `awaiting_human` → `running` → `completed` | `failed` | `timed_out`
+
+An AgentRun ends when a candidate is approved for experiment, rejected, or archived. It does **not** stay open for the duration of the experiment — the Experiment Manager owns that.
 
 ---
 
 ### ModelCall
 
-An individual LLM or Jev invocation within an AgentRun.
+An individual invocation of an external model: LLM, embedding model, Jev, or Muse.
 
 | Field | Type | Description |
 |---|---|---|
 | id | UUID | Unique identifier |
-| agent_run_id | UUID | FK to AgentRun |
-| provider | string | openai, anthropic, jev, etc. |
+| agent_run_id | UUID | FK to AgentRun (nullable — ingestion and evaluation also call models) |
+| evaluation_run_id | UUID | FK to EvaluationRun (nullable, for LLM-as-judge calls) |
+| provider | string | Adapter name, e.g. an LLM vendor, `jev`, `muse`, `llm_baseline` |
 | model | string | Model identifier |
 | input_tokens | int | Token count for input |
 | output_tokens | int | Token count for output |
 | latency_ms | int | Response time |
 | cost_usd | float | Computed cost |
 | purpose | string | What this call was for (classify, generate, evaluate, etc.) |
+| prompt_version | string | Version of the prompt template used (prompts are versioned in git) |
+| request_ref / response_ref | string | Pointer to stored full request/response (Postgres or S3), for audit and replay |
+| status | enum | ok, error, timeout, schema_invalid |
 | timestamp | datetime | When the call was made |
 
 **Why it exists:** Cost, latency, and quality tracking require per-call granularity. This also enables model comparison experiments.
@@ -177,19 +192,24 @@ An individual LLM or Jev invocation within an AgentRun.
 
 ### Decision
 
-A recorded decision point where Jev or a rule evaluated evidence and chose an action.
+A recorded decision point where a rule, Jev, an LLM baseline, or a human evaluated evidence and chose an action.
 
 | Field | Type | Description |
 |---|---|---|
 | id | UUID | Unique identifier |
 | agent_run_id | UUID | FK to AgentRun (if part of agent flow) |
-| decision_type | enum | classify_signal, approve_hypothesis, gate_experiment, etc. |
+| decision_type | enum | signal_triage, evidence_gate, experiment_gate, promotion |
+| decider | enum | rule, jev, llm_baseline, human |
+| subject_type / subject_id | enum / UUID | What was decided about (signal, hypothesis, mutation, experiment) |
+| policy_version | string | Threshold/policy configuration in force |
 | input_summary | text | What was being decided |
 | outcome | string | The decision made |
 | confidence | float | Confidence score (0.0–1.0) |
 | reasoning | text | Explanation of why |
 | model_call_id | UUID | FK to the ModelCall that produced it (if model-based) |
 | escalated | bool | Whether this was escalated to a human |
+
+**Outcomes:** `proceed` | `stop` | `need_more_evidence` | `escalate`. A gate that cannot reach its decider records `escalate` (fail closed).
 
 **Why it exists:** Decisions are the most important thing to audit. When something goes wrong, the question is always "why did the system decide to do that?" Decisions answer that question.
 
@@ -205,11 +225,31 @@ A proposed explanation for observed UX friction.
 | agent_run_id | UUID | FK to AgentRun that produced it |
 | signal_id | UUID | FK to BehaviorSignal being explained |
 | description | text | What the hypothesis proposes |
-| supporting_evidence | list[UUID] | FKs to RetrievalRun chunks that support it |
+| supporting_evidence | list[UUID] | KnowledgeChunk IDs cited (must be a subset of chunks actually retrieved in this run — a deterministic hallucination check) |
 | confidence | float | Agent's confidence in this hypothesis |
 | status | enum | Lifecycle state |
 
 **Lifecycle:** `proposed` → `accepted` | `rejected` | `needs_more_evidence`
+
+---
+
+### UISpecVersion
+
+An immutable, versioned structured description of what the target application renders (screens → component instances → props, copy, design tokens). The demo target app renders **from** a UI Spec version through the component registry.
+
+| Field | Type | Description |
+|---|---|---|
+| id | UUID | Unique identifier |
+| parent_id | UUID | The version this was derived from |
+| spec | JSON | The full UI Spec document |
+| schema_version | string | Version of the UI Spec schema |
+| content_hash | string | For integrity and dedupe |
+| created_by | enum | seed, mutation |
+| created_at | datetime | When |
+
+**Why it exists:** It makes mutations concrete and reversible. A mutation is a patch from version N to candidate N+1; an experiment routes a cohort to N+1; a rollback routes everyone back to N. No source code changes. See MUTATION_SAFETY.md.
+
+**Lifecycle:** Immutable. Never edited, never deleted.
 
 ---
 
@@ -222,13 +262,21 @@ A proposed UI change derived from a hypothesis.
 | id | UUID | Unique identifier |
 | hypothesis_id | UUID | FK to Hypothesis |
 | agent_run_id | UUID | FK to AgentRun that generated it |
-| mutation_type | enum | design_token_change, component_config, copy_change, layout_adjustment, etc. |
-| specification | JSON | The structured mutation (see MUTATION_SAFETY.md) |
+| base_spec_version_id | UUID | The UI Spec version the patch applies to |
+| candidate_spec_version_id | UUID | The UI Spec version produced by applying the patch (after validation) |
+| mutation_type | enum | design_token_change, component_prop_change, copy_change, template_variant_change |
+| specification | JSON | The structured MutationSpec (see MUTATION_SAFETY.md) |
+| risk_tier | enum | low, medium, high (deterministically computed) |
 | component | string | The target component |
+| generator | string | Adapter that produced it: `muse`, `llm_baseline`, `fixture` |
+| generator_version | string | Model/version reported by the adapter |
+| model_call_id | UUID | FK to the ModelCall that generated it |
+| attempt | int | Retry number within the AgentRun |
 | status | enum | Lifecycle state |
-| generation_id | UUID | FK to Generation (once created) |
 
-**Lifecycle:** `generated` → `validated` → `evaluating` → `approved` | `rejected` → `experimenting` → `promoted` | `rolled_back`
+**Lifecycle:** `generated` → `validated` → `sandboxed` → `evaluated` → `awaiting_approval` → `approved` → `experimenting` → `promoted` | `discarded`
+
+`rejected` is a terminal state reachable from any gate before `experimenting` (validation failure, safety failure, Jev `stop`, human rejection). Rejected mutations are kept as negative evidence.
 
 ---
 
@@ -239,12 +287,14 @@ An evaluation of a mutation, agent run, or retrieval operation.
 | Field | Type | Description |
 |---|---|---|
 | id | UUID | Unique identifier |
-| target_type | enum | mutation, agent_run, retrieval_run |
+| target_type | enum | mutation, agent_run, retrieval_run, decision, golden_dataset |
 | target_id | UUID | FK to the entity being evaluated |
 | evaluation_type | enum | deterministic, llm_judge, statistical, human |
 | metrics | JSON | Computed metric values |
 | passed | bool | Whether it passed minimum thresholds |
 | evaluator | string | Which evaluator produced this |
+| evaluator_version | string | Version of the evaluator / judge prompt |
+| dataset_version | string | Golden dataset version (for offline evals) |
 | timestamp | datetime | When evaluation ran |
 
 **Why it exists:** Evaluation is a first-class operation with its own records. This enables meta-evaluation (evaluating the evaluators) and trend analysis.
@@ -259,8 +309,14 @@ A controlled deployment of a mutation to a subset of users.
 |---|---|---|
 | id | UUID | Unique identifier |
 | mutation_id | UUID | FK to Mutation |
-| experiment_type | enum | a_b_test, phased_rollout, etc. |
+| experiment_type | enum | a_b_test (v1 only) |
+| control_spec_version_id | UUID | UI Spec version served to control |
+| treatment_spec_version_id | UUID | UI Spec version served to treatment |
+| flag_key | string | Feature flag that routes cohorts |
 | traffic_percentage | float | Percentage of users in treatment group |
+| primary_metric | string | Pre-registered metric the decision is based on |
+| guardrail_metrics | JSON | Metrics + thresholds that trigger automatic rollback |
+| traffic_source | enum | real, simulated (simulated traffic must be labelled everywhere) |
 | started_at | datetime | When the experiment began |
 | ended_at | datetime | When it concluded |
 | status | enum | Lifecycle state |
@@ -269,25 +325,33 @@ A controlled deployment of a mutation to a subset of users.
 | statistical_significance | float | p-value or equivalent |
 | outcome | enum | positive, negative, inconclusive |
 
-**Lifecycle:** `configured` → `running` → `analyzing` → `concluded`
+**Lifecycle:** `configured` → `running` → `analyzing` → `concluded` | `aborted` (guardrail breach)
 
 ---
 
 ### Generation
 
-An evolutionary step — the record that a mutation was promoted to production.
+An evolutionary step — a UI Spec version that became the default for all users.
 
 | Field | Type | Description |
 |---|---|---|
 | id | UUID | Unique identifier |
 | generation_number | int | Sequential generation (0, 1, 2, ...) |
-| parent_generation_id | UUID | FK to previous generation (null for gen 0) |
-| mutation_id | UUID | FK to the Mutation that was promoted |
-| experiment_id | UUID | FK to the Experiment that validated it |
+| parent_generation_id | UUID | FK to previous generation (null for Generation 0) |
+| ui_spec_version_id | UUID | The UI Spec version this generation serves |
+| mutation_id | UUID | FK to the promoted Mutation (null for Generation 0) |
+| experiment_id | UUID | FK to the validating Experiment (null for Generation 0) |
 | evidence_summary | text | Why this generation exists |
+| status | enum | Lifecycle state |
 | created_at | datetime | When this generation was created |
 
 **Why it exists:** Generations are the unit of evolution. They form a chain of lineage that answers "how did the software get from there to here?"
+
+**Generation 0** is the seeded baseline UI Spec. It has no mutation, experiment, or approval.
+
+**Lifecycle:** `active` → `superseded` (a newer generation was promoted) | `rolled_back` (reverted to parent)
+
+An experiment that is negative or inconclusive produces **no** Generation. Its mutation ends as `discarded`, and its results still flow into Product Memory.
 
 ---
 
@@ -298,9 +362,11 @@ A human approval or rejection of a proposed change.
 | Field | Type | Description |
 |---|---|---|
 | id | UUID | Unique identifier |
-| target_type | enum | mutation, experiment, deployment |
+| approval_type | enum | start_experiment, promote, escalation_review |
+| target_type | enum | mutation, experiment, decision |
 | target_id | UUID | FK to what was approved/rejected |
-| approved_by | string | Who made the decision |
+| approved_by | string | Authenticated identity of the human (never an AI component) |
+| evidence_snapshot | JSON | What the human was shown (scores, diff, screenshots) |
 | approved | bool | Yes or no |
 | reasoning | text | Why |
 | timestamp | datetime | When |
@@ -316,10 +382,14 @@ A record of a mutation being deployed to production.
 | id | UUID | Unique identifier |
 | generation_id | UUID | FK to Generation |
 | deployed_at | datetime | When deployment occurred |
-| deployment_method | string | Feature flag, config update, etc. |
+| deployment_method | string | v1: feature-flag change only |
+| flag_key | string | Which flag was changed |
+| from_spec_version_id / to_spec_version_id | UUID | Exact before/after |
 | status | enum | Lifecycle state |
 
 **Lifecycle:** `deploying` → `active` → `rolled_back`
+
+A deployment is a **configuration change** (a flag now points at a different UI Spec version), never a code deploy. Code deploys go through CI/CD and are out of DarwinUX's autonomous reach.
 
 ---
 
@@ -337,13 +407,34 @@ A record of reverting a deployment.
 
 ## Key Relationships
 
-1. **Evidence chain:** `UserEvent` → `BehaviorSignal` → `AgentRun` → `Hypothesis` → `Mutation` → `EvaluationRun` → `Experiment` → `Generation`. This chain is the core traceability requirement. Given any generation, you must be able to walk backwards to the original user events that triggered it.
+1. **Evidence chain:** `UserEvent` → `BehaviorSignal` → `AgentRun` → `Hypothesis` → `Mutation` → `EvaluationRun` → `Approval` → `Experiment` → `Generation`. This chain is the core traceability requirement. Given any generation, you must be able to walk backwards to the original user events that triggered it.
 
 2. **Knowledge graph:** `KnowledgeDocument` → `KnowledgeChunk` → `RetrievalRun` → `AgentRun`. This links what the system knew to what it decided.
 
 3. **Decision audit trail:** `AgentRun` → `Decision` → `ModelCall`. This links every decision to its reasoning and the model that produced it.
 
 4. **Generational lineage:** `Generation` → `Generation` (parent). This is the evolutionary chain itself.
+
+## Generation Traceability
+
+Every question a Generation must answer maps to a concrete join path:
+
+| Question | Answered by |
+|---|---|
+| What changed? | `Mutation.specification` + diff of `base_spec_version` → `ui_spec_version` |
+| Why did it change? | `Hypothesis.description` + `Generation.evidence_summary` |
+| What evidence triggered it? | `AgentRun.trigger_signal_id` → `BehaviorSignal` → `UserEvent`s |
+| What RAG context was retrieved? | `AgentRun` → `RetrievalRun.chunks_retrieved` → `KnowledgeChunk` → `KnowledgeDocument` |
+| Which agents / nodes participated? | `AgentRun.nodes_visited` + `ModelCall`s |
+| What did Jev decide? | `Decision` where `decider = jev` (and baseline decisions for comparison) |
+| What did Muse generate? | `Mutation` where `generator = muse`, including rejected attempts |
+| How was it evaluated? | `EvaluationRun`s for the mutation |
+| Who approved it? | `Approval` (`start_experiment`, `promote`) |
+| What happened in the experiment? | `Experiment` metrics, significance, outcome, `traffic_source` |
+| Did metrics improve? | `Experiment.outcome` on the pre-registered `primary_metric` |
+| Retained or rolled back? | `Generation.status` + `Rollback` |
+
+If any of these queries cannot be answered from stored records, the traceability invariant is broken.
 
 ## Lifecycle State Patterns
 
@@ -371,3 +462,5 @@ proposed → accepted → experimenting → promoted
 3. **Not every entity needs its own database table on day one.** Some (like ModelCall) could start as JSON fields within AgentRun and be normalized later when querying them independently becomes valuable.
 4. **Lifecycle states should be enforced, not just documented.** A Mutation in state `generated` should not be deployable. State machines prevent invalid transitions.
 5. **Soft deletion over hard deletion.** Rejected mutations, failed experiments, and rolled-back deployments are valuable negative evidence. Never delete them.
+6. **Rollback is a pointer move, not an undo.** Because UI Spec versions are immutable, reverting means routing traffic back to a previous version. Nothing needs to be "reconstructed".
+7. **Record which adapter decided or generated.** `decider` and `generator` fields keep Jev and Muse outputs distinguishable from rules and LLM baselines — without them, you cannot evaluate Jev or Muse at all.

@@ -7,6 +7,10 @@ DarwinUX has two fundamentally different data flows:
 1. **Telemetry Pipeline** — High-volume user events → behavioral signals (real-time-ish)
 2. **RAG Ingestion Pipeline** — Documents → chunks → embeddings → vector store (batch)
 
+A third, smaller flow — **experiment data** — reuses the telemetry pipeline (see the end of this document).
+
+**Terminology:** in this document "telemetry" always means **behavioral telemetry** (what users do in the target app). System instrumentation (traces, metrics, logs about DarwinUX itself) is **operational telemetry** and is covered in OBSERVABILITY.md. They use different pipelines.
+
 These are separate pipelines because they have different volume characteristics, different latency requirements, different failure modes, and different downstream consumers. Combining them would force one pipeline to compromise for the other's constraints.
 
 ---
@@ -42,19 +46,24 @@ graph LR
     end
 
     subgraph Store["5. Store"]
-        PG["PostgreSQL"]
-        SIGNAL["BehaviorSignal"]
+        EVENTS["PostgreSQL: user_events"]
+        SIGNAL["PostgreSQL: behavior_signals"]
     end
 
-    subgraph Trigger["6. Trigger"]
-        JEV["Jev Classify"]
-        AGENT["Agent Orchestration"]
+    subgraph Trigger["6. Hand-off"]
+        INV["Investigation worker picks up detected signals"]
+        TRIAGE["LangGraph: signal_triage (Jev)"]
     end
+
+    DLQ["Dead-letter queue"]
 
     APP --> SDK --> API --> VALIDATE --> SQS
-    SQS --> WORKER --> AGG --> DETECT
-    DETECT --> PG
-    DETECT --> SIGNAL --> JEV --> AGENT
+    SQS --> WORKER
+    SQS -.->|after N failures| DLQ
+    WORKER -->|idempotent insert| EVENTS
+    EVENTS --> AGG --> DETECT
+    DETECT --> SIGNAL
+    SIGNAL --> INV --> TRIAGE
 ```
 
 ### Stage-by-Stage Design
@@ -66,8 +75,10 @@ The target application includes a lightweight JavaScript telemetry SDK that capt
 **Why synchronous:** Event capture must happen in the user's browser at the moment of interaction. This is inherently synchronous with the user's actions. The SDK should be small and non-blocking — it fires events and moves on.
 
 **What the SDK captures:**
+- Event ID (client-generated UUID — the idempotency key)
 - Event type (click, scroll, navigate, error, etc.)
-- Target (CSS selector or component identifier)
+- Target (stable component ID from the component registry; CSS selector only as fallback)
+- UI Spec version / experiment variant the user is seeing
 - Timestamp
 - Session ID
 - Page context (URL, viewport, component tree position)
@@ -78,6 +89,8 @@ The target application includes a lightweight JavaScript telemetry SDK that capt
 - Form field values
 - Authentication tokens
 - Anything that would require consent beyond basic analytics
+
+Free-text fields that can leak personal data (error messages, URLs with query strings) are scrubbed server-side before persistence. For the demo target app all users are synthetic, but the pipeline should be built as if they were not.
 
 #### Stage 2: Ingest (API — Synchronous)
 
@@ -92,7 +105,7 @@ Body: { events: [UserEvent, ...] }
 
 1. Validate event schema (Pydantic)
 2. Reject malformed events with 400
-3. Enrich with server metadata
+3. Enrich with server metadata (received_at; no raw IP stored)
 4. Push batch to SQS
 5. Return 202 Accepted
 ```
@@ -126,21 +139,27 @@ Workers poll SQS, process event batches, and detect behavioral signals.
 ```
 1. Poll SQS batch
 2. Deserialize events
-3. Group by session and component
-4. Run signal detectors:
+3. Persist raw events FIRST, idempotently (INSERT ... ON CONFLICT (event_id) DO NOTHING)
+4. For each affected (session, component), run detectors over a time window
+   of persisted events — not just the events in this batch:
    a. Rage click: 3+ clicks on same element within 2 seconds
    b. Abandonment: Form started but not submitted within session
    c. Repeated error: Same error 3+ times within session
    d. Confusion loop: User navigates away and back 3+ times
    e. Slow completion: Task takes >2σ above mean completion time
-5. For each detected signal:
-   a. Create BehaviorSignal entity
-   b. Persist to PostgreSQL
-   c. Classify via Jev (should we investigate?)
-   d. If actionable → trigger agent run
-6. Persist raw events to PostgreSQL (for audit and future analysis)
+5. For each detected pattern:
+   a. Upsert BehaviorSignal (same type + component → increment evidence_count, update last_seen)
+   b. Status = detected
+6. Commit transaction
 7. Delete SQS messages (acknowledge processing)
 ```
+
+**Two properties that make this correct:**
+
+- **Idempotency.** SQS delivers *at least once*. A crashed worker means the same batch is processed twice. Keying events by `event_id` and upserting signals makes a replay harmless.
+- **Windowed detection over stored events.** Abandonment or confusion loops span many requests and therefore many SQS messages. A detector that only looks at the current batch would miss them. Detectors query the last N minutes of persisted events for the affected sessions.
+
+**The telemetry worker never calls Jev or an LLM.** It stays cheap, fast, and fully deterministic. Deciding whether to investigate happens in the investigation workflow.
 
 **Signal detection is deterministic.** This is critical. Rage click detection is a counting problem, not a language understanding problem. Deterministic detection means deterministic testing, which means high reliability.
 
@@ -154,18 +173,18 @@ Processed events and detected signals are persisted to PostgreSQL.
 1. **Raw events** — For audit, replay, and future analysis. Append-only, potentially high volume. Consider partitioning by time.
 2. **Behavioral signals** — The meaningful output. Lower volume, actively queried by the agent system.
 
-#### Stage 6: Trigger (Jev + Agents — Asynchronous)
+#### Stage 6: Hand-off to Investigation (Asynchronous)
 
-Detected signals are classified by Jev and, if actionable, trigger agent runs.
+Detected signals that pass a deterministic threshold (severity, evidence count, not already under investigation) are picked up by the **investigation worker**, which starts an AgentRun. The first graph node, `signal_triage`, asks the Jev port whether to proceed.
 
-**Why asynchronous:** Agent runs are expensive (multiple LLM calls, RAG retrieval, evaluation) and may take minutes. They absolutely cannot be in the telemetry processing path. Triggering is fire-and-forget from the pipeline's perspective.
+**Why asynchronous:** Agent runs are expensive (multiple LLM calls, RAG retrieval, evaluation) and may take minutes. They absolutely cannot be in the telemetry processing path.
 
 **Triggering mechanism options:**
-- Direct async call from the worker (simplest, v1).
-- Second SQS queue for agent triggers (more resilient, v2).
-- Database polling by the agent system (decoupled, but adds latency).
+- Fire-and-forget async task from the telemetry worker — **rejected**: if the process dies, the investigation is silently lost, and it couples two workloads with very different cost profiles.
+- Second SQS queue for investigation requests — resilient, but another queue to operate.
+- **The signal row is the trigger** — the investigation worker periodically selects `detected` signals above threshold (`SELECT ... FOR UPDATE SKIP LOCKED`) and marks them `investigating`.
 
-**Recommendation:** Start with direct async calls from the worker. Add a separate trigger queue if reliability becomes a concern.
+**Recommendation:** Use the database as the hand-off in v1. It is durable, transactional, needs no extra infrastructure, and the extra latency (seconds to a minute) is irrelevant for an investigation that takes minutes. Add a dedicated queue only if polling becomes a measured problem.
 
 ---
 
@@ -203,19 +222,24 @@ graph LR
     end
 
     subgraph Index["5. Index"]
-        PG["pgvector"]
-        S3["S3 (Raw Documents)"]
-        REG["Document Registry"]
+        PG["PostgreSQL + pgvector: chunks"]
+        REG["PostgreSQL: KnowledgeDocument registry"]
     end
 
-    UPLOAD --> LOADER
-    SYNC --> LOADER
-    SYSTEM --> LOADER
+    RAW["S3: raw document (immutable)"]
+    HASH{"Content hash already indexed?"}
+    SKIP(["Skip"])
+
+    UPLOAD --> RAW
+    SYNC --> RAW
+    SYSTEM --> RAW
+    RAW --> HASH
+    HASH -->|yes| SKIP
+    HASH -->|no| LOADER
     LOADER --> EXTRACT --> META
     META --> NORM --> CHUNK --> ENRICH
     ENRICH --> EMBED --> BATCH
     BATCH --> PG
-    BATCH --> S3
     BATCH --> REG
 ```
 
@@ -319,7 +343,7 @@ Documents enter through three paths:
    c. Update document content hash
 ```
 
-**Deduplication:** Before inserting, check the document's content hash. If a document with the same hash already exists and is already indexed, skip re-processing. This prevents waste when automated sync pulls unchanged documents.
+**Deduplication:** The content hash is checked **before parsing** (see diagram). If a document with the same hash already exists and is already indexed, skip re-processing. This prevents waste when automated sync pulls unchanged documents.
 
 ---
 
@@ -332,7 +356,7 @@ Documents enter through three paths:
 | **Processing cost** | Low (counting, pattern matching) | High (parsing, embedding API calls) |
 | **Failure impact** | Missed signals (recoverable) | Missing knowledge (noticeable but not critical) |
 | **Trigger** | Continuous (user activity) | Event-driven (uploads, syncs) |
-| **Queue** | SQS (essential for decoupling) | Optional (could process synchronously for low volume) |
+| **Queue** | SQS (essential for decoupling) | SQS in AWS; low volume means a simple job table or the same local queue emulator is fine in development |
 | **Downstream consumer** | Agent system (via Jev gate) | RAG retrieval (via vector search) |
 
 ### Why Not One Pipeline?
@@ -346,11 +370,38 @@ It might seem simpler to have a single "data pipeline" that handles both telemet
 
 ---
 
+## Experiment Data Flow
+
+Experiments do not need a third pipeline. They reuse the telemetry pipeline:
+
+1. The Experiment Manager (deterministic) assigns each session to control or treatment by hashing `session_id` with the experiment's `flag_key` — stable, stateless assignment.
+2. The target app asks the flag service which UI Spec version to render and includes `ui_spec_version_id` on every event.
+3. Events flow through the normal telemetry pipeline.
+4. A scheduled analysis job (deterministic) computes the pre-registered primary metric and guardrail metrics per variant from `user_events`.
+5. On a guardrail breach, the job flips the flag back to control (automatic rollback). Otherwise, when the planned sample size is reached, the Experiment moves to `analyzing` and a human decides on promotion.
+
+**Traffic source.** A portfolio project has no real users. Experiments will initially run on a **synthetic user simulator** (scripted personas driving the demo app in a headless browser, with friction deliberately built into Generation 0). Simulated results are labelled `traffic_source = simulated` everywhere and must never be presented as real UX evidence. See OPEN_QUESTIONS.md.
+
+---
+
+## Local vs. AWS
+
+| Concern | Local development | AWS (later) |
+|---|---|---|
+| Queue | SQS-compatible emulator in docker compose (e.g., ElasticMQ or LocalStack) | SQS + DLQ |
+| Database | `pgvector/pgvector` Postgres container | RDS for PostgreSQL with pgvector |
+| Raw documents | Local directory or S3-compatible emulator | S3 |
+| Workers | `python -m darwin.workers <name>` processes | ECS/Fargate services from the same image |
+
+The code talks to a queue port and a storage port, so switching is configuration, not a rewrite.
+
+---
+
 ## What You Should Understand Before Implementation
 
 1. **The SQS queue in the telemetry pipeline exists for resilience, not performance.** Even if you could process events synchronously in time, the queue protects the user-facing application from pipeline failures and enables independent scaling.
-2. **Signal detection is deterministic by design.** An LLM cannot reliably count "3 clicks in 2 seconds." Rules-based detection is faster, cheaper, testable, and more reliable. Jev classifies after detection, it does not perform detection.
-3. **The RAG pipeline's most expensive step is embedding, not parsing.** Budget API costs and rate limits when planning batch sizes. Track cost per document as a metric.
-4. **Deduplication prevents waste.** Content hashing on documents and embeddings model tracking on chunks are not premature optimization — they prevent re-processing unchanged content on every sync cycle.
+2. **Signal detection is deterministic by design.** An LLM cannot reliably count "3 clicks in 2 seconds." Rules-based detection is faster, cheaper, testable, and more reliable. Jev triages after detection, in the investigation workflow; it never performs detection and the telemetry worker never calls it.
+3. **At-least-once delivery means every consumer must be idempotent.** Persist first, key by `event_id`, upsert signals. A replayed batch must change nothing.
+4. **The RAG pipeline's most expensive step is embedding, not parsing.** Budget API costs and rate limits when planning batch sizes. Hash documents before parsing and record the embedding model on every chunk so unchanged content is never reprocessed.
 5. **These pipelines will be the first things you build.** They are prerequisites for the agent system (which needs behavioral signals) and for RAG retrieval (which needs indexed chunks). Get them right and tested before building the AI layer.
 6. **Synchronous vs. asynchronous is a question of "who is waiting?"** If a human or a user-facing system is waiting for the result, it must be fast (synchronous or fast-async). If nothing is waiting, batch it for efficiency.

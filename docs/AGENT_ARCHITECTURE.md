@@ -13,7 +13,7 @@ The spectrum of implementation options, from simplest to most complex:
 | **Deterministic Python** | Fast, testable, predictable, free | Logic with clear rules and no ambiguity |
 | **Template + rules** | Configurable, auditable | Structured output from structured input |
 | **Single LLM call** | Flexible text understanding/generation | One-shot tasks requiring language understanding |
-| **Jev decision** | Classification, scoring, confidence-aware gating | Decision points requiring calibrated confidence |
+| **Jev decision** | Classification, scoring, confidence-aware gating | Decision points requiring confidence-aware gating |
 | **Muse generation** | Structured creative output within constraints | Producing candidate mutations from approved hypotheses |
 | **LangGraph node** | Stateful, conditional routing, retries | Steps that depend on previous results |
 | **LLM agent with tools** | Autonomous multi-step reasoning | Tasks requiring iterative investigation |
@@ -36,19 +36,20 @@ The spectrum of implementation options, from simplest to most complex:
 
 **Reasoning:**
 - Pattern detection (e.g., "3+ clicks on same element within 2 seconds") is purely rule-based. An LLM cannot reliably count events or compute time deltas.
-- Signal classification (is this signal worth investigating?) benefits from Jev's calibrated scoring, but does not require multi-step reasoning.
+- Signal triage (is this signal worth investigating?) is a confidence-aware decision — Jev's intended role — but does not require multi-step reasoning. Whether Jev's confidence is calibrated must be measured, not assumed.
 - This runs on every batch of processed events. Latency and cost must be minimal.
 
 **Implementation sketch:**
 ```
 Telemetry events
-  → Deterministic pattern matching (Python)
-  → BehaviorSignal created
-  → Jev classify(signal) → { actionable: true/false, severity: 0.0–1.0 }
-  → If actionable and above threshold → trigger agent run
+  → Deterministic pattern matching (Python, telemetry worker)
+  → BehaviorSignal created (status: detected)
+  → Deterministic threshold: severity/evidence_count high enough? (else stays logged)
+  → Investigation worker starts AgentRun
+  → Graph node signal_triage: JevProvider.decide(signal_triage) → proceed | stop | escalate
 ```
 
-**What you learn:** Signal detection rules, threshold tuning, Jev classification API.
+**What you learn:** Signal detection rules, threshold tuning, designing a decision port before the real provider exists.
 
 ---
 
@@ -70,14 +71,14 @@ Telemetry events
 **Reasoning:**
 - Query formulation benefits from language understanding ("rage_click on checkout" → "checkout button design guidelines, error states, past experiments with checkout").
 - Evidence assessment ("is this enough to form a hypothesis?") requires judgment that rules cannot easily encode.
-- However, the agent should not have access to arbitrary tools. Its tools are: `search_product_memory`, `get_document_details`, `summarize_evidence`.
+- However, the agent should not have access to arbitrary tools. Its tools are read-only: `search_product_memory` and `get_document_details`. (Summarizing evidence is the agent's own final LLM output, not a tool.) No tool can write, deploy, or call Muse.
 
 **Why LangGraph:** The research agent may need to iterate — if the first retrieval query returns insufficient results, it should reformulate and try again. LangGraph's conditional edges support this loop with explicit bounds (max 3 retrieval attempts).
 
 **Implementation sketch:**
 ```
 LangGraph node: research_agent
-  Tools: [search_product_memory, get_document_details]
+  Tools: [search_product_memory, get_document_details]   # read-only, deterministic
   Input: BehaviorSignal
   Output: EvidencePackage { chunks: [...], summary: str, sufficient: bool }
   Max iterations: 3
@@ -176,19 +177,19 @@ LangGraph node: critique_hypothesis
 
 **Reasoning:**
 
-Muse is not a general-purpose LLM being prompted to "write some UI changes." It is a specialized generative model (from TypeSafe AI) that should be treated as a distinct subsystem — the **generative mutation layer** — alongside Jev (decision layer), RAG (evidence layer), LangGraph agents (reasoning/orchestration layer), and the Evaluation Engine (quality/safety layer).
+Muse is treated as a distinct subsystem — the **generative mutation layer** — alongside Jev (decision layer), RAG (evidence layer), LangGraph agents (reasoning/orchestration layer), and the Evaluation Engine (quality/safety layer).
 
 The critical distinction from the original "Mutation Agent" concept:
 
 | Aspect | Generic LLM "Mutation Agent" | Muse as Generative Layer |
 |---|---|---|
-| **Model** | Whichever general-purpose LLM is configured | Muse — a purpose-built model |
+| **Model** | Whichever general-purpose LLM is configured | Muse (provider and model details: see OPEN_QUESTIONS.md) |
 | **Input** | Freeform prompt with hypothesis | Structured input: hypothesis + context + constraints |
 | **Output** | Raw text requiring parsing | Structured candidate mutation |
 | **Boundary** | Part of the agent orchestration | Its own provider with its own abstraction |
 | **Evaluation** | Evaluated as "did the agent do a good job?" | Evaluated as "is this candidate mutation valid, safe, and good?" |
 
-**Why a provider boundary, not an agent:** Muse's API surface, input format, and capabilities are not yet fully defined. Wrapping it in a provider boundary means:
+**Why a provider boundary, not an agent:** Muse's provider, API surface, input format, and capabilities are not documented in this repository. Nothing here should be read as a claim about how Muse works internally. Wrapping it in a provider boundary means:
 - The rest of the system can develop and test against a mock Muse provider.
 - When real integration details become available, only the provider implementation changes.
 - Muse can be independently evaluated, versioned, and monitored.
@@ -208,16 +209,22 @@ Muse generates candidate
 
 **Implementation sketch:**
 ```
+Deterministic step: build_mutation_context   # "mutation planning" is NOT an LLM step
+  - Load active UI Spec version for the target screen
+  - Look up allowed props / token ranges in the component registry
+  - Attach retrieved evidence + hypothesis
+  → MutationContext + MutationConstraints
+
 LangGraph node: generate_mutation_via_muse
   Input: ApprovedHypothesis + MutationContext + MutationConstraints
   Call: muse_provider.generate_mutation(hypothesis, context, constraints)
   Output: CandidateMutation
-  Post-processing: Deterministic validation against component registry
+  Post-processing: Parse into MutationSpec (schema) — anything unparseable counts as a failed attempt
   Loop: If validation fails, retry with constraint feedback (max 3 attempts)
   On repeated failure: reject with reasoning, log for Muse evaluation
 ```
 
-**What you learn:** Provider abstraction for proprietary models, constrained generation, structured input/output contracts, candidate-vs-deployment distinction, evaluation of generative model quality.
+**What you learn:** Provider abstraction for external models with unknown interfaces, constrained generation, structured input/output contracts, candidate-vs-deployment distinction, evaluation of generative model quality.
 
 ---
 
@@ -225,7 +232,7 @@ LangGraph node: generate_mutation_via_muse
 
 **Proposed name:** Safety Agent
 
-**What it actually does:**
+**What it actually does:** (in the graph this is the `safety_check` node, after `sandbox_render`)
 - Checks mutations against safety constraints
 - Verifies no forbidden properties are modified
 - Validates accessibility requirements
@@ -305,7 +312,7 @@ Evaluation orchestrator:
 
 **Should it be an agent?** **No — standard monitoring infrastructure.**
 
-**Recommended implementation:** OpenTelemetry instrumentation + CloudWatch alarms + periodic health check jobs.
+**Recommended implementation:** OpenTelemetry instrumentation + CloudWatch alarms + periodic health check jobs. Experiment guardrail monitoring (auto-rollback) is deterministic code in the Experiment Manager. See OBSERVABILITY.md.
 
 **Reasoning:**
 - Monitoring is a solved problem with mature tooling. Using an LLM to "monitor" adds latency, cost, and unreliability to a system that must be the most reliable part of the platform.
@@ -316,18 +323,33 @@ Evaluation orchestrator:
 
 ---
 
-## Summary: Agent vs. Not-Agent
+## Summary: Responsibility Classification
 
-| Responsibility | Agent? | Implementation | Justification |
+Every responsibility is classified as exactly one primary kind: **deterministic Python**, **LLM call**, **LangGraph node** (a unit of orchestration that wraps one of the others), **tool**, **Jev decision**, **Muse generation**, or **human decision**.
+
+| Responsibility | Classification | Runs where | Why |
 |---|---|---|---|
-| Signal Detection | ❌ | Python rules + Jev classify | Pattern matching is deterministic; classification is Jev's strength |
-| Evidence Research | ✅ | LangGraph + RAG tools | Requires iterative retrieval and query reformulation |
-| Hypothesis Formation | ❌ | Single LLM call, structured output | One-shot reasoning task, no tools needed |
-| Hypothesis Critique | ❌ | Single LLM call, different perspective | One-shot evaluation, no iteration needed |
-| Mutation Generation | 🔷 | **Muse** (provider) + validation | Dedicated generative model, not a generic agent; provider boundary |
-| Safety Validation | ❌ | Deterministic pipeline | Safety must be reliable, fast, and auditable |
-| Evaluation Orchestration | ❌ | Python orchestrator | Deterministic coordination of parallel evaluators |
-| System Monitoring | ❌ | Standard monitoring tools | Solved problem, no AI required |
+| Event validation & persistence | Deterministic Python | Telemetry worker | Schema + idempotent insert |
+| Signal detection (Observer) | Deterministic Python | Telemetry worker | Counting over time windows |
+| Signal triage | Jev decision (graph node `signal_triage`) | Investigation worker | Confidence-aware go/no-go |
+| Evidence research | LangGraph node containing the **only LLM agent** | Investigation worker | Needs iterative query reformulation |
+| Product Memory search | Tool (`search_product_memory`) — deterministic retrieval | Called by Research agent | Retrieval is search, not reasoning |
+| Hypothesis formation | LLM call (structured output), graph node `hypothesize` | Investigation worker | One-shot reasoning |
+| Hypothesis critique | LLM call (structured output), graph node `critique` | Investigation worker | One-shot evaluation, generator/critic split |
+| Evidence sufficiency | Jev decision, graph node `evidence_gate` | Investigation worker | Confidence-aware gating |
+| Mutation planning (context + constraints) | Deterministic Python, graph node `build_mutation_context` | Investigation worker | Registry lookup; must not be improvised by a model |
+| Mutation generation | Muse generation, graph node `generate_mutation` | Investigation worker | Constrained generative capability |
+| Sandbox rendering | Deterministic Python (headless render), graph node `sandbox_render` | Investigation worker | Reproducible artefacts (screenshots, DOM, a11y scan) |
+| Safety validation | Deterministic Python, graph node `safety_check` | Investigation worker | Safety must never be probabilistic |
+| Evaluation orchestration | Deterministic Python (some evaluators use LLM-as-judge) | Investigation worker | Rule-based evaluator selection + aggregation |
+| Experiment readiness | Jev decision, graph node `experiment_gate` | Investigation worker | Highest-stakes AI gate |
+| Approval to experiment | **Human decision** (graph interrupt) | Evolution Lab | Accountability |
+| Escalation review | **Human decision** (graph interrupt) | Evolution Lab | Jev uncertain or unavailable |
+| Experiment assignment & statistics | Deterministic Python | Experiment Manager | Math, not judgment |
+| Guardrail monitoring & auto-rollback | Deterministic Python | Experiment Manager | Moving toward safety needs no approval |
+| Promotion to new Generation | **Human decision** (Jev advisory) | Evolution Lab | Accountability |
+| Experiment report → Product Memory | Deterministic record + optional LLM summary | Ingestion worker | Summary is nice-to-have; facts are stored deterministically |
+| System monitoring | Deterministic (OTel + CloudWatch) | Infrastructure | Solved problem |
 
 **Result:** Of eight proposed "agents," only one (Research) is genuinely an autonomous agent with tools. Mutation generation is handled by Muse — a dedicated generative model behind a provider boundary, not an agent. The rest are deterministic code, single LLM calls, or Jev decisions.
 
@@ -336,45 +358,59 @@ Evaluation orchestrator:
 | Subsystem | Role |
 |---|---|
 | **RAG / Product Memory** | Evidence — what do we know? |
-| **LangGraph Agents** | Reasoning — investigate and hypothesize |
+| **LangGraph workflow** | Reasoning / orchestration — investigate and hypothesize |
 | **Jev** | Decision — should we proceed? |
 | **Muse** | Generation — produce a candidate mutation |
 | **Evaluation Engine** | Quality — is the candidate good enough? |
 
 ## LangGraph Orchestration
 
-Even though most components are not agents, LangGraph still provides value as the orchestration layer for the overall investigation flow:
+Even though most components are not agents, LangGraph still provides value as the orchestration layer for the investigation flow. The legend on each node shows what kind of work it does.
 
 ```mermaid
 graph TD
-    START["Signal Received"] --> CLASSIFY["Node: classify_signal (Jev)"]
-    CLASSIFY -->|not actionable| END_DISCARD["End: Discard"]
-    CLASSIFY -->|actionable| RESEARCH["Node: research (Agent)"]
-    
-    RESEARCH --> HYPOTHESIZE["Node: hypothesize (LLM call)"]
-    HYPOTHESIZE --> CRITIQUE["Node: critique (LLM call)"]
-    
-    CRITIQUE -->|rejected| END_REJECT["End: Archive hypothesis"]
-    CRITIQUE -->|approved| GATE["Node: evidence_gate (Jev)"]
-    
-    GATE -->|insufficient| RESEARCH
-    GATE -->|escalate| HUMAN_REVIEW["Node: human_review"]
-    GATE -->|sufficient| MUSE["Node: generate_mutation (Muse provider)"]
-    
-    MUSE -->|validation failed 3x| END_FAIL["End: Mutation failed"]
-    MUSE -->|validated| SANDBOX["Node: sandbox_render"]
-    
-    SANDBOX --> SAFETY["Node: safety_check (deterministic)"]
-    SAFETY -->|failed| END_UNSAFE["End: Safety rejected"]
-    SAFETY -->|passed| EVALUATE["Node: evaluate (orchestrator)"]
-    
-    EVALUATE --> DECIDE["Node: experiment_gate (Jev)"]
-    DECIDE -->|reject| END_LOW_SCORE["End: Low evaluation score"]
-    DECIDE -->|approve| APPROVAL["Node: request_approval (human)"]
-    
-    APPROVAL -->|rejected| END_HUMAN_REJECT["End: Human rejected"]
-    APPROVAL -->|approved| EXPERIMENT["Node: run_experiment"]
+    START(["Signal passed deterministic threshold"]) --> TRIAGE{"signal_triage [Jev]"}
+    TRIAGE -->|stop| END_DISCARD(["End: signal logged"])
+    TRIAGE -->|escalate| HUMAN_ESC["human_review [Human interrupt]"]
+    TRIAGE -->|proceed| RESEARCH["research [LLM agent]"]
+
+    RESEARCH <-->|tool calls| RAG[("search_product_memory [Tool: RAG retrieval]")]
+    RESEARCH --> HYPOTHESIZE["hypothesize [LLM call]"]
+    HYPOTHESIZE --> CRITIQUE["critique [LLM call]"]
+    CRITIQUE -->|rejected| END_REJECT(["End: hypothesis archived"])
+    CRITIQUE -->|approved| GATE{"evidence_gate [Jev]"}
+
+    GATE -->|need_more_evidence, max 2 loops| RESEARCH
+    GATE -->|escalate| HUMAN_ESC
+    GATE -->|stop| END_REJECT
+    GATE -->|proceed| PLAN["build_mutation_context [Deterministic]"]
+
+    HUMAN_ESC -->|continue| PLAN
+    HUMAN_ESC -->|stop| END_REJECT
+
+    PLAN --> MUSE["generate_mutation [Muse]"]
+    MUSE -->|unparseable, retry max 3| MUSE
+    MUSE -->|3 failures| END_FAIL(["End: generation failed"])
+    MUSE -->|MutationSpec| SANDBOX["sandbox_render [Deterministic]"]
+
+    SANDBOX --> SAFETY{"safety_check [Deterministic]"}
+    SAFETY -->|violation, retry with feedback| MUSE
+    SAFETY -->|hard violation| END_UNSAFE(["End: safety rejected"])
+    SAFETY -->|passed| EVALUATE["evaluate [Deterministic orchestrator + LLM judges]"]
+
+    EVALUATE --> DECIDE{"experiment_gate [Jev]"}
+    DECIDE -->|stop| END_LOW(["End: archived with scores"])
+    DECIDE -->|proceed or escalate| APPROVAL["request_approval [Human interrupt]"]
+
+    APPROVAL -->|rejected| END_HUMAN(["End: human rejected"])
+    APPROVAL -->|approved| HANDOFF(["End: handed to Experiment Manager"])
 ```
+
+**Human decision boundaries** are LangGraph *interrupts*: the graph checkpoints its state to PostgreSQL and stops. The Evolution Lab shows the pending decision; the human's answer resumes the graph. No thread or process waits for a human.
+
+**The graph ends at approval.** Running an experiment takes days. That is not a workflow step to hold open; it is a deterministic lifecycle owned by the Experiment Manager (DATA_PIPELINES.md, "Experiment Data Flow"). Post-experiment analysis and the promotion decision happen outside the graph.
+
+**Every loop is bounded** (research ≤ 2 extra loops, Muse ≤ 3 attempts total including safety retries). Unbounded loops are the most common way agent systems burn money.
 
 **Why LangGraph for orchestration:** The investigation flow has conditional branches, loops (research → hypothesize → need more evidence → research again), and human-in-the-loop requirements. LangGraph's state graph model handles these naturally. Without it, you'd write a complex state machine in plain Python — which is possible but less maintainable as the flow evolves.
 
@@ -386,11 +422,13 @@ class InvestigationState(TypedDict):
     evidence: Optional[EvidencePackage]
     hypothesis: Optional[Hypothesis]
     critique: Optional[CritiqueResult]
+    mutation_context: Optional[MutationContext]     # Deterministic
     candidate_mutation: Optional[CandidateMutation]  # From Muse
     sandbox_result: Optional[SandboxResult]
     evaluation: Optional[EvaluationResult]
     decisions: list[Decision]
-    iteration_count: int
+    research_loops: int
+    muse_attempts: int
 ```
 
 Note that `candidate_mutation` is explicitly named to reinforce that Muse produces candidates, not deployable changes. The state tracks the full progression: evidence → hypothesis → critique → Muse candidate → sandbox → evaluation.
@@ -401,8 +439,8 @@ Note that `candidate_mutation` is explicitly named to reinforce that Muse produc
 
 1. **An agent is a specific architectural pattern (autonomous decision-making with tools), not a synonym for "AI-powered component."** Most AI-powered components in DarwinUX are single LLM calls, dedicated models (Muse, Jev), or deterministic code.
 2. **The cost of making something an agent is concrete: latency (seconds vs. milliseconds), cost (LLM tokens), unpredictability (non-deterministic behavior), and evaluation difficulty.** Each time you consider an agent, weigh these costs against the capability gained.
-3. **LangGraph's value is in orchestration, not in making everything an agent.** A LangGraph node can contain a deterministic function, a single LLM call, a Muse call, or a Jev decision — it's the conditional routing and state management that justify LangGraph.
+3. **LangGraph's value is in orchestration, not in making everything an agent.** A LangGraph node can contain a deterministic function, a single LLM call, a Muse call, or a Jev decision — it's the conditional routing and state management that justify LangGraph. Human decisions are graph *interrupts* (checkpoint and stop), and experiments live outside the graph — a workflow engine should not wait for weeks.
 4. **The generator-critic pattern (hypothesis + critique) is more reliable than a single "do everything" agent.** Separating generation from evaluation forces the system to justify its reasoning.
-5. **Muse, Jev, and general-purpose LLMs serve different roles.** Muse generates candidate mutations. Jev makes calibrated decisions. General-purpose LLMs handle reasoning tasks (hypothesis, critique, research). Don't conflate these — they have different input/output contracts, different evaluation criteria, and different provider boundaries.
-6. **Jev as a decision gate replaces what would otherwise be arbitrary thresholds or uncalibrated LLM "opinions."** The value of a decision-oriented model is confidence-aware gating, not text generation.
+5. **Muse, Jev, and general-purpose LLMs serve different roles.** Muse generates candidate mutations. Jev makes confidence-aware decisions. General-purpose LLMs handle reasoning tasks (hypothesis, critique, research). Don't conflate these — they have different input/output contracts, different evaluation criteria, and different provider boundaries.
+6. **Jev's role is confidence-aware gating, not text generation.** Its value over plain thresholds or an LLM's "opinion" is a hypothesis to test: DarwinUX records rule, LLM-baseline, and Jev decisions side by side so the comparison can actually be measured. Every gate fails closed.
 7. **Safety validation must be deterministic first, AI-augmented second.** Never rely solely on an LLM to enforce safety constraints. Muse's output always passes through deterministic validation before AI evaluation.

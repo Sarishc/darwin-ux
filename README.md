@@ -20,21 +20,19 @@ No application code exists yet. This repository contains only architectural docu
 
 ```
 User Interaction
-  → Telemetry
-  → Data Pipeline
-  → Behavioral Signals
-  → RAG / Product Memory
-  → AI Agents
-  → Jev Decision Engine
-  → Candidate Mutation
-  → AI Evaluation
-  → Experiment
-  → Human Approval
-  → Deployment
-  → Monitoring
-  → Feedback
-  → Next Generation
+  → Behavioral Telemetry → Data Pipeline → Behavioral Signals   (deterministic)
+  → RAG / Product Memory                                         (evidence)
+  → LangGraph Investigation Workflow                              (reasoning)
+  → Jev Decision Gate → Hypothesis                                (decision)
+  → Muse → Candidate Mutation (structured UI Spec patch)          (generation)
+  → Sandbox → Deterministic Validation → AI Evaluation            (quality / safety)
+  → Jev Experiment Gate → Human Approval
+  → Controlled Experiment (feature flag) → Monitoring / auto-rollback
+  → Human Promotion Decision → New Generation (or discard)
+  → Experiment Results → Product Memory → Next Generation
 ```
+
+AI never edits source code, never exposes a change to users without human approval, and never touches auth, secrets, infrastructure, or CI/CD. See [MUTATION_SAFETY.md](docs/MUTATION_SAFETY.md).
 
 ## Technology Foundation
 
@@ -42,14 +40,22 @@ User Interaction
 |---|---|
 | Backend / AI Platform | Python, FastAPI, Pydantic |
 | Database | PostgreSQL (RDS) |
-| Frontend | Next.js, TypeScript, Tailwind CSS |
-| Agent Orchestration | LangGraph |
-| Decision Engine | Jev (TypeSafe AI) |
-| RAG | Custom pipeline with embeddings + vector search |
-| Infrastructure | AWS (ECS/Fargate, S3, SQS, RDS, ECR) |
+| Frontend | Next.js, TypeScript (Evolution Lab + demo target app) |
+| Workflow Orchestration | LangGraph (LangChain only where useful: loaders, splitters) |
+| Decision Layer | Jev by TypeSafe AI — behind a provider boundary |
+| Generative Mutation Layer | Muse — behind a provider boundary |
+| RAG / Product Memory | Custom pipeline, embeddings + pgvector |
+| Evaluation | Deterministic checks, statistical metrics, LLM-as-judge, human review, golden datasets |
+| Async processing | SQS queue + Python workers |
+| Containers | Docker |
+| Infrastructure | AWS (ECS/Fargate, ECR, RDS, S3, SQS, IAM, Secrets Manager, CloudWatch) — not provisioned yet |
 | IaC | Terraform |
 | CI/CD | GitHub Actions |
 | Observability | OpenTelemetry, CloudWatch |
+
+Jev and Muse integration details (APIs, SDKs, model identifiers, credentials) are **not yet known** and are deliberately not invented here; see [OPEN_QUESTIONS.md](docs/OPEN_QUESTIONS.md).
+
+**Shape:** a modular monolith — one Next.js app, one FastAPI app, and Python workers sharing the same codebase and image.
 
 ## Documentation
 

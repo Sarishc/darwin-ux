@@ -179,9 +179,9 @@ graph TD
 - Response latency measurement
 - Token count computation
 
-**Strengths:** Fast, cheap, 100% reliable, no false positives.
+**Strengths:** Fast, cheap, repeatable — the same input always produces the same result.
 
-**Limitations:** Can only check things with clear rules. Cannot assess quality, relevance, or coherence.
+**Limitations:** Only as correct as the rule itself (a wrong rule is wrong every time). Can only check things with clear rules. Cannot assess quality, relevance, or coherence.
 
 **When to prefer:** Always prefer deterministic evaluation where possible. It is the foundation.
 
@@ -253,7 +253,7 @@ A golden dataset is a curated set of inputs with known-good expected outputs (or
 ### Structure
 
 ```
-golden_datasets/
+backend/tests/evals/golden/
 ├── rag_retrieval/
 │   ├── queries.json          # { query, relevant_chunk_ids, irrelevant_chunk_ids }
 │   └── README.md
@@ -262,6 +262,9 @@ golden_datasets/
 │   └── README.md
 ├── agent_trajectories/
 │   ├── trajectories.json     # { signal, expected_tool_calls, expected_outcome }
+│   └── README.md
+├── gate_decisions/
+│   ├── decisions.json        # { decision_type, evidence, human_label }
 │   └── README.md
 └── mutation_evaluation/
     ├── mutations.json         # { mutation_spec, expected_evaluation_results }
@@ -289,14 +292,48 @@ CI Pipeline:
       └── Mutation golden set → Safety validation must pass 100%
 ```
 
+With 20–30 examples per dataset, a single flipped example moves a rate by 3–5%. Thresholds must be wider than that noise, and an LLM-judged metric is never a blocker on its own.
+
 **What should block deployment:**
 - Schema compliance regression → **BLOCK** (deterministic, binary)
 - Safety validation regression → **BLOCK** (deterministic, binary)
-- Retrieval precision drops >10% → **BLOCK** (statistical, with threshold)
-- Agent task success drops >15% → **BLOCK** (statistical, with threshold)
+- Retrieval precision drops >10% on a PR that touches RAG code/config → **BLOCK** (statistical, with threshold)
+- Agent task success drops >15% on a PR that touches prompts, tools, or the graph → **BLOCK** (statistical, with threshold)
+- Muse/baseline generator produces any golden mutation that passes validation but should not → **BLOCK** (safety)
 - Relevance score drops 0.2 points → **WARN** (LLM-as-judge, noisy)
 - Latency increases → **WARN** (may be external provider issue)
 - Cost increases → **WARN** (may be intentional model change)
+
+---
+
+## Evaluating Jev Decisions
+
+Jev is an AI component and is evaluated like one. Because every `Decision` records its `decider`, the same inputs can be compared across the rules, the LLM baseline, and Jev.
+
+| Metric | Type | What It Measures |
+|---|---|---|
+| **Agreement with human labels** | Statistical (golden `gate_decisions`) | Does the gate reach the decision an expert would? |
+| **Calibration (e.g., reliability curve, ECE)** | Statistical | When confidence is 0.8, is it right ~80% of the time? |
+| **Escalation rate** | Deterministic | Too high = useless gate; too low = overconfident gate |
+| **False-proceed rate at `experiment_gate`** | Statistical | The costly error: proceeding on something a human would stop |
+| **Downstream outcome** | Statistical (long-term) | Of experiments Jev let through, how many were positive? |
+| **Latency / cost / error rate** | Deterministic | Operational health of the integration |
+
+Jev is kept at a gate only if it beats the simpler adapters on these metrics. That is the honest version of "use AI where it adds value."
+
+## Evaluating Muse Generations
+
+| Metric | Type | What It Measures |
+|---|---|---|
+| **Schema-valid rate** | Deterministic | Share of outputs that parse into a `MutationSpec` |
+| **Constraint-violation rate** | Deterministic | Share that touch non-allowlisted paths or out-of-range values |
+| **Attempts to first valid candidate** | Deterministic | Efficiency of constrained generation |
+| **Hypothesis alignment** | LLM-as-judge + human | Does the mutation actually address the hypothesis? |
+| **Evaluation pass rate** | Deterministic (aggregated) | Share that pass the full Evaluation Engine |
+| **Human approval rate** | Human | Share approved for experiment |
+| **Experiment win rate** | Statistical (long-term) | Share of experimented mutations that improve the primary metric |
+
+As with Jev, every metric is computed for Muse **and** for the LLM baseline generator, so Muse's contribution is measured rather than asserted.
 
 ---
 
@@ -318,4 +355,5 @@ LLM-as-judge evaluators are AI systems themselves and must be evaluated:
 3. **Golden datasets are hand-crafted and expensive.** They are also the only way to detect AI quality regressions in CI/CD. Budget time for creating and maintaining them.
 4. **Evaluation and experimentation are different.** Evaluation predicts whether a mutation might be good (before deployment). Experimentation measures whether it actually is (during deployment). Both are needed.
 5. **Not all evaluations should block deployment.** Only deterministic checks and statistically significant regressions in golden datasets should block. Noisy signals should warn.
-6. **Evaluating AI evaluators is not optional.** If your LLM-as-judge is miscalibrated, every decision downstream is compromised. Build meta-evaluation into the system from the start.
+6. **Jev and Muse are evaluated against baselines.** Recording which adapter decided or generated makes it possible to show — not claim — that they add value.
+7. **Evaluating AI evaluators is not optional.** If your LLM-as-judge is miscalibrated, every decision downstream is compromised. Build meta-evaluation into the system from the start.
