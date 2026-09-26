@@ -1,0 +1,321 @@
+# DarwinUX — Evaluation Strategy
+
+## Evaluation Is Not Testing
+
+Testing asks: "Does this code work as intended?"
+
+Evaluation asks: "Does this AI system produce good results?"
+
+Both are necessary. They are not the same thing.
+
+A test has a binary outcome (pass/fail) determined by the developer at write time. An evaluation measures quality on a spectrum, often requires human judgment or statistical analysis, and must account for the non-deterministic nature of AI outputs.
+
+DarwinUX requires evaluation at four levels, each with different metrics, methods, and integration points.
+
+## Four Levels of Evaluation
+
+```mermaid
+graph TD
+    subgraph L1["Level 1: RAG Evaluation"]
+        R1["Retrieval Precision"]
+        R2["Retrieval Recall"]
+        R3["MRR"]
+        R4["Context Relevance"]
+        R5["Groundedness"]
+    end
+
+    subgraph L2["Level 2: LLM Evaluation"]
+        L2a["Schema Compliance"]
+        L2b["Relevance"]
+        L2c["Faithfulness"]
+        L2d["Hallucination"]
+        L2e["Latency / Cost"]
+    end
+
+    subgraph L3["Level 3: Agent Evaluation"]
+        A1["Task Success"]
+        A2["Tool Selection"]
+        A3["Trajectory Correctness"]
+        A4["Unnecessary Actions"]
+        A5["Recovery Behavior"]
+    end
+
+    subgraph L4["Level 4: Mutation / System Evaluation"]
+        M1["Functional Correctness"]
+        M2["Accessibility"]
+        M3["Performance"]
+        M4["UX Metrics"]
+        M5["Regression / Safety"]
+    end
+```
+
+### Level 1: RAG Evaluation
+
+**What we're evaluating:** Does Product Memory return the right knowledge for a given query?
+
+| Metric | Type | What It Measures |
+|---|---|---|
+| **Precision@K** | Deterministic (requires labels) | Of retrieved chunks, how many are relevant? |
+| **Recall@K** | Deterministic (requires labels) | Of all relevant chunks, how many were retrieved? |
+| **MRR** | Deterministic (requires labels) | How high is the first relevant result? |
+| **Context Relevance** | LLM-as-judge | Is the assembled context relevant to the query? |
+| **Groundedness** | LLM-as-judge | Is the output supported by retrieved context? |
+| **Faithfulness** | LLM-as-judge + human | Does the output accurately represent what context says? |
+
+**Golden dataset required:** RAG evaluation needs manually labeled query-relevance pairs. There is no shortcut. See RAG_ARCHITECTURE.md for golden dataset design.
+
+**When to run:**
+- After changes to the chunking strategy, embedding model, or retrieval pipeline.
+- On a recurring schedule to detect corpus quality drift.
+- Before any major Product Memory re-indexing.
+
+**CI/CD integration:** RAG evaluation should run as part of the AI evaluation regression suite but should **not block deployment** of non-RAG changes. It should block deployment of changes to the RAG pipeline itself.
+
+---
+
+### Level 2: LLM Evaluation
+
+**What we're evaluating:** Do LLM calls (hypothesis generation, critique, etc.) produce high-quality, well-structured outputs?
+
+| Metric | Type | What It Measures |
+|---|---|---|
+| **Schema Compliance** | Deterministic | Does the output conform to the expected Pydantic schema? |
+| **Relevance** | LLM-as-judge | Is the output relevant to the input? |
+| **Faithfulness** | LLM-as-judge | Does the output stay grounded in provided context? |
+| **Hallucination Rate** | LLM-as-judge + human | Does the output contain unsupported claims? |
+| **Latency** | Deterministic | Response time (p50, p95, p99) |
+| **Cost** | Deterministic | Token usage and dollar cost per call |
+| **Token Efficiency** | Deterministic | Output-to-input token ratio |
+
+**Schema compliance is the most important and easiest to evaluate.** If the LLM is asked to produce a `HypothesisOutput` Pydantic model and the output fails validation, that is an unambiguous failure — no LLM judge needed.
+
+**Latency and cost are deterministic and cheap to track.** Every ModelCall entity records these. Trend them over time. Alert on anomalies.
+
+**Hallucination detection is the hardest.** For DarwinUX, hallucination means: "The hypothesis cites evidence that was not in the retrieved context" or "The critique references design guidelines that don't exist." This requires an LLM-as-judge evaluator that cross-references output claims against the input context.
+
+**When to run:**
+- On every LLM call (schema compliance, latency, cost — these are cheap).
+- On a sample of calls (relevance, faithfulness — these cost LLM tokens themselves).
+- On demand for hallucination deep-dives.
+
+**CI/CD integration:** Schema compliance tests should **block deployment.** Latency/cost regression tests should **warn but not block** (external provider performance is not in our control).
+
+---
+
+### Level 3: Agent Evaluation
+
+**What we're evaluating:** Does the Research Agent (and the overall LangGraph orchestration) make good decisions and take efficient paths?
+
+| Metric | Type | What It Measures |
+|---|---|---|
+| **Task Success Rate** | Deterministic + human | Did the agent reach a valid conclusion? |
+| **Tool Selection Accuracy** | Deterministic (requires golden) | Did the agent call the right tools? |
+| **Trajectory Correctness** | LLM-as-judge + human | Did the agent follow a reasonable path? |
+| **Unnecessary Actions** | Deterministic | How many tool calls were wasted? |
+| **Recovery Behavior** | Deterministic | Did the agent recover from tool failures? |
+| **Iteration Count** | Deterministic | How many loops before completion? |
+| **Cost Efficiency** | Deterministic | Total cost relative to outcome quality |
+
+**Agent evaluation is harder than LLM evaluation** because it involves sequences of decisions, not single outputs. A trajectory evaluation must consider:
+- Was each step reasonable given what the agent knew at that point?
+- Were there steps that could have been skipped?
+- Did the agent recover from failed tool calls, or did it spiral?
+
+**Golden trajectories:** Create reference trajectories for known scenarios. "Given a rage_click signal on the checkout button, a good agent trajectory looks like: search for checkout button docs → search for past checkout experiments → summarize findings." Compare actual trajectories against golden ones.
+
+**When to run:**
+- After changes to agent prompts, tool definitions, or LangGraph graph structure.
+- On a sample of production agent runs (asynchronous, non-blocking).
+
+**CI/CD integration:** Agent trajectory tests against golden scenarios should **block deployment** of agent-related changes. Statistical trajectory analysis should **not block** (it's a monitoring concern).
+
+---
+
+### Level 4: Mutation / System Evaluation
+
+**What we're evaluating:** Is the candidate mutation (produced by Muse) correct, safe, accessible, and an improvement?
+
+| Metric | Type | What It Measures |
+|---|---|---|
+| **Schema Validity** | Deterministic | Does the mutation conform to MutationSpec? |
+| **Allowlist Compliance** | Deterministic | Does it only modify permitted properties? |
+| **Value Range Validity** | Deterministic | Are values within acceptable ranges? |
+| **Accessibility (WCAG)** | Deterministic + LLM | Contrast ratios, font sizes, focus indicators |
+| **Design Consistency** | LLM-as-judge | Does it follow the design system? |
+| **Performance Impact** | Deterministic | Does it degrade render performance? |
+| **Regression** | Deterministic | Does it reintroduce known problems? |
+| **UX Improvement** | Statistical (experiment) | Do user metrics improve? |
+
+**This level has the widest range of evaluation methods:**
+- Pure deterministic (schema validation, allowlist checks)
+- Deterministic + rules (contrast ratio calculations)
+- LLM-as-judge (design consistency)
+- Statistical (A/B test results)
+- Human (expert review)
+
+**The deterministic checks are the safety floor.** They run fast, they never fail randomly, and they must all pass before any LLM-based evaluation runs. See MUTATION_SAFETY.md.
+
+**UX improvement is measured by experiments, not by evaluation.** Evaluation predicts whether a mutation might be good. Experiments measure whether it actually is. These are different things and should not be conflated.
+
+**When to run:**
+- Deterministic validation: on every candidate mutation (always).
+- LLM-as-judge evaluation: on every candidate that passes deterministic validation.
+- Statistical evaluation: during experiments (after human approval).
+
+**CI/CD integration:** Deterministic mutation validation tests should **block deployment.** The evaluation framework's own tests should block. Individual mutation evaluation results do not affect CI/CD — they affect the Jev decision gate.
+
+---
+
+## Evaluation Methods
+
+### Deterministic Evaluation
+
+**What it is:** Evaluation with fixed, repeatable logic and binary outcomes.
+
+**Examples:**
+- Pydantic schema validation
+- Mutation allowlist checks
+- Contrast ratio calculation
+- Response latency measurement
+- Token count computation
+
+**Strengths:** Fast, cheap, 100% reliable, no false positives.
+
+**Limitations:** Can only check things with clear rules. Cannot assess quality, relevance, or coherence.
+
+**When to prefer:** Always prefer deterministic evaluation where possible. It is the foundation.
+
+### Statistical Metrics
+
+**What it is:** Quantitative measurement computed from data, often requiring aggregation.
+
+**Examples:**
+- Precision@K, Recall@K, MRR (retrieval metrics)
+- A/B test significance calculations
+- Latency percentiles (p50, p95, p99)
+- Cost trends over time
+
+**Strengths:** Objective, comparable over time, automatable.
+
+**Limitations:** Requires labeled data (for retrieval metrics) or sufficient sample size (for experiments).
+
+**When to prefer:** For measuring trends, comparing models, and making data-driven decisions.
+
+### LLM-as-Judge
+
+**What it is:** Using one LLM to evaluate the output of another LLM (or the same LLM with a different prompt).
+
+**Examples:**
+- "Is this hypothesis supported by the provided evidence?" → score 1–5
+- "Does this mutation follow the design system guidelines?" → pass/fail with reasoning
+- "Is this output faithful to the input context?" → score 1–5
+
+**Strengths:** Can evaluate subjective qualities (relevance, coherence, design consistency). Scales better than human evaluation.
+
+**Limitations:**
+- **Not deterministic.** The same input may get different scores on different runs.
+- **Position bias.** LLM judges can prefer outputs that appear first.
+- **Self-preference bias.** An LLM may rate its own outputs more highly.
+- **Cost.** Each evaluation costs LLM tokens.
+
+**Mitigation strategies:**
+- Run evaluations multiple times and average scores.
+- Use a different model for judging than for generation.
+- Calibrate against human judgments regularly.
+- Treat LLM-as-judge scores as signals, not ground truth.
+
+**When to prefer:** When deterministic rules cannot express the evaluation criteria, and human evaluation is too expensive for the volume.
+
+### Human Evaluation
+
+**What it is:** Expert humans reviewing AI outputs and providing judgments.
+
+**Examples:**
+- Reviewing a sample of hypotheses for reasoning quality.
+- Reviewing mutations for design taste and user experience.
+- Final approval before experiments.
+- Periodic calibration of LLM-as-judge evaluators.
+
+**Strengths:** Highest quality judgments. Can catch subtle issues that automated methods miss.
+
+**Limitations:** Slow, expensive, doesn't scale, subject to individual bias.
+
+**When to prefer:**
+- Final approval gates (non-negotiable for DarwinUX).
+- Calibrating automated evaluators.
+- Evaluating new types of outputs where no automated evaluator exists yet.
+- Spot-checking production quality.
+
+## Golden Evaluation Datasets
+
+A golden dataset is a curated set of inputs with known-good expected outputs (or at minimum, known-good evaluation labels). They serve as regression tests for AI quality.
+
+### Structure
+
+```
+golden_datasets/
+├── rag_retrieval/
+│   ├── queries.json          # { query, relevant_chunk_ids, irrelevant_chunk_ids }
+│   └── README.md
+├── hypothesis_generation/
+│   ├── scenarios.json        # { signal, evidence, expected_hypothesis_qualities }
+│   └── README.md
+├── agent_trajectories/
+│   ├── trajectories.json     # { signal, expected_tool_calls, expected_outcome }
+│   └── README.md
+└── mutation_evaluation/
+    ├── mutations.json         # { mutation_spec, expected_evaluation_results }
+    └── README.md
+```
+
+### Building Golden Datasets
+
+1. **Start small.** 20–30 examples per dataset is sufficient to detect regressions. Quality over quantity.
+2. **Use real scenarios.** Generate examples from actual agent runs that were manually verified as correct.
+3. **Include negative examples.** Bad hypotheses, incorrect tool selections, unsafe mutations.
+4. **Version them.** Golden datasets evolve with the system. Track changes in git.
+5. **Review quarterly.** As the corpus and system change, golden datasets become stale.
+
+### Using Golden Datasets in CI/CD
+
+```
+CI Pipeline:
+  ├── Unit tests (fast, always run)
+  ├── Integration tests (medium, always run)
+  └── AI Evaluation Regression (slow, run on AI-related changes)
+      ├── RAG golden set → Precision/Recall must not regress
+      ├── Hypothesis golden set → Schema compliance + relevance score must not regress
+      ├── Agent trajectory golden set → Task success rate must not regress
+      └── Mutation golden set → Safety validation must pass 100%
+```
+
+**What should block deployment:**
+- Schema compliance regression → **BLOCK** (deterministic, binary)
+- Safety validation regression → **BLOCK** (deterministic, binary)
+- Retrieval precision drops >10% → **BLOCK** (statistical, with threshold)
+- Agent task success drops >15% → **BLOCK** (statistical, with threshold)
+- Relevance score drops 0.2 points → **WARN** (LLM-as-judge, noisy)
+- Latency increases → **WARN** (may be external provider issue)
+- Cost increases → **WARN** (may be intentional model change)
+
+---
+
+## Evaluating the Evaluators (Meta-Evaluation)
+
+LLM-as-judge evaluators are AI systems themselves and must be evaluated:
+
+1. **Calibrate against human judgments.** Have humans rate a set of outputs. Compare LLM judge scores to human scores. Measure agreement (Cohen's kappa or similar).
+2. **Track judge consistency.** Run the same evaluation multiple times. Measure variance. High variance means the judge is unreliable.
+3. **Detect judge drift.** If the underlying judge model changes (provider update), re-run calibration.
+4. **A/B test judges.** When considering a new evaluation prompt or model, run both old and new judges on the same inputs. Compare.
+
+---
+
+## What You Should Understand Before Implementation
+
+1. **Deterministic evaluation is the foundation.** Start here. It's fast, reliable, and free. Every other evaluation method builds on top of it, not instead of it.
+2. **LLM-as-judge is powerful but unreliable.** Never use it as the sole decision-maker. Use it as one signal among several, calibrated against human judgment.
+3. **Golden datasets are hand-crafted and expensive.** They are also the only way to detect AI quality regressions in CI/CD. Budget time for creating and maintaining them.
+4. **Evaluation and experimentation are different.** Evaluation predicts whether a mutation might be good (before deployment). Experimentation measures whether it actually is (during deployment). Both are needed.
+5. **Not all evaluations should block deployment.** Only deterministic checks and statistically significant regressions in golden datasets should block. Noisy signals should warn.
+6. **Evaluating AI evaluators is not optional.** If your LLM-as-judge is miscalibrated, every decision downstream is compromised. Build meta-evaluation into the system from the start.
