@@ -1,28 +1,37 @@
 [project]
 name = "darwin-ux-backend"
 version = "0.0.0"
-description = "DarwinUX backend: API, workers, and AI subsystems (not implemented yet)."
+description = "DarwinUX backend: API, workers, and AI subsystems."
 requires-python = ">=3.13,<3.14"
-# Runtime dependencies are intentionally empty until Step 2.
-dependencies = []
+dependencies = [
+    "fastapi>=0.141.1",
+    "pydantic>=2.13.5",
+    "pydantic-settings>=2.15.0",
+    "uvicorn>=0.54.0",
+]
 
 [dependency-groups]
-# Declared, not installed. `uv sync` installs them once uv is available.
 dev = [
     "ruff>=0.6",
     "mypy>=1.11",
     "pytest>=8.3",
+    "httpx2>=2.13.1",
 ]
 
-[tool.uv]
-# No importable package exists yet (src/darwin/ arrives in Step 2), so uv
-# manages only the environment and dependencies, without building anything.
-package = false
+[build-system]
+# uv's own build backend: pure-Python, src layout by default, no plugins.
+requires = ["uv_build>=0.12.19,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+# The distribution is "darwin-ux-backend"; the importable package is "darwin".
+module-name = "darwin"
 
 # ---- Ruff: formatter + linter ---------------------------------------------
 [tool.ruff]
 target-version = "py313"
 line-length = 100
+src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = [
@@ -38,8 +47,11 @@ select = [
 [tool.mypy]
 python_version = "3.13"
 strict = true
+mypy_path = "src"
+# Teaches mypy how Pydantic models/settings construct themselves (field types in __init__).
+plugins = ["pydantic.mypy"]
 
 # ---- pytest: test runner ---------------------------------------------------
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers"
+addopts = "-ra --strict-markers --import-mode=importlib"

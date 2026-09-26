@@ -12,9 +12,15 @@ It is not a chatbot wrapper. It is a closed-loop system where software evolves t
 
 ## Status
 
-**Step 1 — Development Environment** (Step 0 architecture complete)
+**Step 2 — Python Application Foundation** (Steps 0–1 complete)
 
-No application code exists yet. The repository contains architectural documentation and the local toolchain configuration. To set up a machine, see [DEVELOPMENT.md](docs/DEVELOPMENT.md).
+A minimal FastAPI application with liveness/readiness endpoints, settings, structured logging, and tests. No database or AI components yet. To set up a machine and run it, see [DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
+```bash
+make sync   # install locked dependencies
+make api    # http://127.0.0.1:8000/api/v1/health/live
+make check  # format check, lint, type check, tests
+```
 
 ## The Evolution Loop
 

@@ -1,6 +1,6 @@
 # DarwinUX — Development Environment
 
-> **Status (Step 1):** toolchain decisions and configuration only. There is no application code, no runtime dependency, and no local service yet.
+> **Status (Step 2):** a minimal FastAPI application with health endpoints, settings, structured logging, and tests. No database, no local services, no AI components yet.
 
 ## 1. Prerequisites
 
@@ -52,7 +52,9 @@ With nvm: `nvm use` in the repo reads `.nvmrc`.
 
 The main reason is **one tool with standard metadata**: `pyproject.toml` stays portable (any PEP 621 tool can read it), and `uv.lock` makes installs reproducible between the laptop, CI, and the Docker image. The same `uv sync --frozen` command will be used in all three.
 
-**Project shape:** `backend/pyproject.toml` sets `[tool.uv] package = false` because no importable package exists yet. When `backend/src/darwin/` is created (Step 2), a build backend is added and this flag is removed.
+**Project shape:** `backend/` is an installable package using the **src layout** (`backend/src/darwin/`). The build backend is **`uv_build`** — uv's own, pure-Python backend: it needs no plugins, understands the src layout by default, and avoids adding a second tool (hatchling/setuptools) for a job uv already does. The distribution is named `darwin-ux-backend`; the import name is `darwin` (`[tool.uv.build-backend] module-name`). `uv sync` installs it into `.venv` in editable mode, so code changes take effect without reinstalling.
+
+Why the src layout: tests import `darwin` the way users of the installed package would, instead of accidentally importing whatever happens to be in the current directory.
 
 `uv.lock` is created by the first `uv sync` and **must be committed**.
 
@@ -70,7 +72,8 @@ The main reason is **one tool with standard metadata**: `pyproject.toml` stays p
 - `.env.example` (committed): every variable name the project uses, with empty values or safe defaults and a comment. It is the documentation of configuration.
 - `.env` (git-ignored): your local values. Created with `cp .env.example .env`.
 - In AWS, values come from Secrets Manager / ECS task definitions — never from a `.env` file baked into an image.
-- When the backend exists, settings will be loaded and validated by a Pydantic settings class; unknown or missing required values fail at startup, not at first use.
+- Settings are loaded and validated by `darwin.config.Settings` (pydantic-settings). Invalid values fail at startup, not at first use.
+- **Settings read process environment variables only — never a `.env` file directly.** Loading `.env` is the launcher's job: `make api` passes it with `uv run --env-file ../.env` when it exists. This keeps tests independent of whatever is in your local `.env`, and matches AWS, where ECS injects real environment variables.
 
 **Conventions:**
 
@@ -97,7 +100,7 @@ A formatter makes style a non-topic; a linter catches mistakes a formatter can't
 
 **Why mypy `strict`:** strictness is cheap to adopt on an empty codebase and very expensive to retrofit. Pydantic's mypy plugin will be enabled when Pydantic is added.
 
-**Status:** configured in `backend/pyproject.toml` and declared in the `dev` dependency group; **not installed**. There is no Python code to check yet. They are installed by the first `uv sync`.
+**Status:** installed via the `dev` dependency group and run by `make check`. mypy uses the Pydantic plugin so model/settings constructors are type-checked.
 
 ## 8. Local-Service Strategy (not implemented)
 
@@ -123,27 +126,38 @@ Principles:
 
 ## 9. Commands
 
-There is **no Makefile yet**, on purpose: in Step 1 the only real commands are a handful of one-liners, and a Makefile containing targets for things that don't exist would lie about the project's state. A Makefile will be added in Step 2, when there are commands worth wrapping (start services, run the API, run all checks).
+A small root `Makefile` wraps the real commands. It only delegates to uv — uv still owns dependencies — and every target works today. Run `make help` to list them.
 
-Commands that work today (once uv is installed):
+| Command | What it runs (in `backend/`) | Use it to |
+|---|---|---|
+| `make sync` | `uv sync` | Install/refresh dependencies from `uv.lock` |
+| `make api` | `uv run [--env-file ../.env] uvicorn darwin.main:app --reload` | Start the API on http://127.0.0.1:8000 with auto-reload |
+| `make test` | `uv run pytest` | Run the tests |
+| `make lint` | `uv run ruff check .` | Lint |
+| `make format` | `uv run ruff format .` | Format in place |
+| `make typecheck` | `uv run mypy src tests` | Type check |
+| `make check` | format check + lint + typecheck + tests | Run everything CI will run, before every commit |
+
+Without make, run the same commands from `backend/`, e.g.:
 
 ```bash
-# from backend/
-uv python find 3.13          # confirm uv sees a Python 3.13 interpreter
-uv sync                      # create backend/.venv, install dev tools, write uv.lock
-uv run ruff format --check . # formatter (nothing to format yet)
-uv run ruff check .          # linter (nothing to lint yet)
+uv run uvicorn darwin.main:app --reload
 ```
 
+Adding a dependency: `uv add <package>` (runtime) or `uv add --dev <package>` (tooling), from `backend/`. Both update `pyproject.toml` **and** `uv.lock`; commit both.
+
+With the API running:
+
+- http://127.0.0.1:8000/api/v1/health/live
+- http://127.0.0.1:8000/api/v1/health/ready
+- http://127.0.0.1:8000/docs — interactive OpenAPI docs generated by FastAPI from the response models
+
+Other checks:
+
 ```bash
-# from the repository root
 nvm use                      # switch to Node 24 per .nvmrc
 cp .env.example .env         # create local env file (git-ignored)
 ```
-
-`mypy` and `pytest` are configured but have nothing to run on; `pytest` exits with "no tests collected" until Step 2.
-
-Planned Makefile targets (Step 2+, not created): `setup`, `services-up`, `services-down`, `fmt`, `lint`, `typecheck`, `test`, `check` (= fmt-check + lint + typecheck + test, the same thing CI will run).
 
 ## Manual Setup (one-time)
 
@@ -173,18 +187,94 @@ nvm alias default 24
 
 | Item | Arrives | Why not now |
 |---|---|---|
-| FastAPI, Pydantic, SQLAlchemy, Alembic, any runtime dependency | Step 2+ | No code uses them |
-| `backend/src/darwin/` package, tests | Step 2 | Application code is out of scope |
-| `compose.yaml`, Postgres, queue emulator | Step 2 | Nothing connects to them |
-| Dockerfile | Step 2+ | No app to containerise |
-| Makefile | Step 2 | No commands worth wrapping yet |
+| SQLAlchemy, Alembic, database drivers | Later step | No database yet |
+| `compose.yaml`, Postgres, queue emulator | Later step | Nothing connects to them |
+| Dockerfile for the app | Later step | Running on the host is faster to iterate on |
 | Next.js, `package.json`, `node_modules` | Step 2 (demo app) / 7 | Frontend not started |
-| GitHub Actions | Step 2+ | Nothing to build or test |
+| GitHub Actions | Later step | `make check` is the same gate, run locally |
 | Terraform, AWS | Step 9 | Local-first |
-| OpenTelemetry SDK | Step 2+ | No process to instrument |
-| pre-commit hooks | Future option | `make check` + CI will enforce the same checks without another tool; revisit if checks are forgotten in practice |
+| OpenTelemetry SDK | Later step | Structured logs are enough for one process |
+| LangChain, LangGraph, LLM/embedding SDKs, Jev, Muse | Later steps | No AI component exists yet |
+| pre-commit hooks | Future option | `make check` (and later CI) enforces the same checks without another tool; revisit if checks are forgotten in practice |
 | devcontainers, Nix, Bazel, monorepo frameworks | Not planned | Overhead with no benefit for one developer and two apps |
 | Large IDE configs (`.vscode/`, `.idea/`) | Not planned | `.editorconfig` + `pyproject.toml` are tool-neutral |
+
+## 11. The Backend Application
+
+### Package layout
+
+```
+backend/src/darwin/
+├── __init__.py        # __version__, read from the installed package metadata
+├── main.py            # create_app() + lifespan; `app` for Uvicorn
+├── config.py          # Settings (pydantic-settings)
+├── logging_config.py  # JSON log formatter + configure_logging()
+└── api/
+    ├── router.py      # the /api/v1 router; includes every v1 router
+    └── health.py      # /health/live, /health/ready + their response models
+```
+
+Modules are added when there is code for them — no empty `rag/`, `agents/`, or `providers/` directories. There is also no `core/` package: generic names like "core" or "utils" become dumping grounds with no clear place in the dependency rule.
+
+**Dependency direction:** `main` → `api`, `config`, `logging_config`; `logging_config` → `config`; `config` and `api/health` import nothing else from `darwin`. Nothing imports `main`. This is the start of the layering in ARCHITECTURE.md: the entrypoint wires pieces together; the pieces don't know about the entrypoint.
+
+### How a request becomes a response
+
+```
+curl GET /api/v1/health/live
+  → Uvicorn (ASGI server): owns the socket, parses HTTP, calls app(scope, receive, send)
+  → FastAPI app (ASGI application): matches path + method against registered routes
+  → api_v1_router (prefix /api/v1) → health.router (prefix /health) → live()
+  → handler returns LivenessResponse (a Pydantic model)
+  → FastAPI validates it against the declared return type and serialises it to JSON
+  → Uvicorn writes: HTTP/1.1 200 OK, content-type: application/json, {"status":"alive"}
+```
+
+**ASGI** is the interface between a Python web server and a Python web application: the server calls the application with a description of the request and two async callables to receive the body and send the response. Uvicorn is the server; FastAPI (built on Starlette) is the application framework. They can be swapped independently.
+
+**A router** is a group of routes with a shared prefix and tags. Routers keep each area of the API in its own module and let `/api/v1` be applied in one place.
+
+**Response models** are declared as the handler's return type. FastAPI uses them to validate output (a typo in a field fails loudly instead of reaching clients), to serialise JSON, and to generate the OpenAPI schema at `/docs`.
+
+### Application factory and lifespan
+
+`create_app(settings)` builds a new, independent app each time it is called. Tests call it with explicit `Settings`; `main.py` also creates one module-level `app` so `uvicorn darwin.main:app` can find it.
+
+Importing the module does not open connections. Anything that talks to the outside world (database pools, HTTP clients) will be opened in the **lifespan** function, which runs once at server startup and once at shutdown.
+
+### Logging
+
+Standard-library `logging` with a small JSON formatter: one JSON object per line with `timestamp`, `level`, `logger`, `message`, and optional structured `context`:
+
+```json
+{"timestamp": "2026-09-26T22:59:24.146023+00:00", "level": "INFO", "logger": "darwin.main", "message": "application started", "context": {"app_name": "DarwinUX", "version": "0.0.0", "env": "local", "log_level": "INFO"}}
+```
+
+Log with `logger.info("message", extra={"context": {...}})`. Only the `darwin.*` logger tree uses this format; Uvicorn's own server/access lines keep their default format. Never log secrets — the startup line lists only non-sensitive settings, explicitly.
+
+### Liveness vs. readiness
+
+| | `GET /api/v1/health/live` | `GET /api/v1/health/ready` |
+|---|---|---|
+| Question | Is the process alive and able to answer HTTP? | Can this instance do its real work right now? |
+| Checks | Nothing — if the handler runs, the answer is yes | Application state now; dependencies (database, queue) later |
+| Failure means | The process is stuck → **restart** it | Not ready yet or a dependency is down → **stop sending traffic**, don't restart |
+| Response | `200 {"status": "alive"}` | `200 {"status": "ready", "checks": [...]}` or `503 {"status": "not_ready", "checks": [...]}` |
+
+Why they must differ: if liveness also checked the database, a database outage would make the orchestrator restart every healthy API instance in a loop — making the outage worse. Readiness failing only removes instances from the load balancer until the dependency recovers.
+
+Today readiness has one real check, `startup_complete`: true after the lifespan startup has run, false before startup and after shutdown. When a database arrives, a `database` check is appended to the `checks` list; the response shape and status codes stay the same, so nothing that calls the endpoint has to change.
+
+### Tests
+
+| File | Covers |
+|---|---|
+| `tests/test_app.py` | App factory, metadata, independent instances, `/api/v1` versioning |
+| `tests/test_health.py` | Liveness/readiness responses, schemas, 503 before startup and after shutdown, method handling |
+| `tests/test_config.py` | Defaults, `DARWIN_` prefix, case-insensitive log level, fail-fast validation, ignoring future variables |
+| `tests/test_logging.py` | JSON output, structured context, robustness, idempotent configuration |
+
+API tests use FastAPI's `TestClient`, which calls the ASGI app in-process — no server or network needed. Using it as a context manager (`with TestClient(app)`) runs the lifespan, exactly like Uvicorn.
 
 ---
 

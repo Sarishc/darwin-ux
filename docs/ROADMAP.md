@@ -6,7 +6,7 @@ Each step is a thin, working vertical slice with an explicit **exit criterion**.
 
 Mocks come first for anything whose real integration is unknown (Jev, Muse). The system is built and evaluated against those mocks and against LLM baselines, then the real providers are plugged in behind the same ports.
 
-Operational telemetry (OpenTelemetry) is added with the first running process (Step 2a) in minimal form and deepened as components appear.
+Operational telemetry (OpenTelemetry) is added in minimal form in Step 2b, once there is more than one process to trace, and deepened as components appear.
 
 ## Steps
 
@@ -26,18 +26,19 @@ Documents in `docs/`. No code, no dependencies, no infrastructure.
 **Learn:** reproducible environments, lockfiles, the distinct jobs of formatter/linter/type checker/test runner, secret hygiene.
 **Exit:** after the documented manual installs, `uv sync` succeeds and `.env` is provably git-ignored.
 
-### Step 2a — Backend Foundations
+### Step 2a — Python Application Foundation ✅
 
-- Package skeleton `backend/src/darwin/` matching ARCHITECTURE.md; FastAPI app with health endpoint; Pydantic settings reading `.env`.
-- `compose.yaml` with Postgres + pgvector; Makefile wrapping the real commands.
-- Pure domain models (Pydantic) and state-transition rules, with unit tests.
-- CI: format, lint, type check, unit tests.
-- Minimal OpenTelemetry on the API.
+- Installable `darwin` package (src layout, `uv_build`), FastAPI app factory + lifespan, `/api/v1` router.
+- `GET /api/v1/health/live` and `GET /api/v1/health/ready` with explicit response models.
+- `Settings` (pydantic-settings, `DARWIN_` prefix), JSON-lines logging with the standard library.
+- Tests for app creation, health endpoints, settings, and logging; root Makefile (`make check`).
 
-**Learn:** project structure, dependency rules, Pydantic modelling, state machines, CI basics.
-**Exit:** `docker compose up` + tests green in CI; illegal state transitions fail tests.
+**Learn:** package layout, ASGI, routers, Pydantic models and settings, dependency direction, liveness vs. readiness, API tests.
+**Exit:** `make check` passes; both endpoints return 200 from a running server.
 
 ### Step 2b — Behavioral Telemetry Pipeline + Generation 0
+
+Prerequisites carried over from the original foundations plan: `compose.yaml` with Postgres + pgvector, a `database` readiness check, CI running `make check`, and minimal OpenTelemetry. Domain models (`UserEvent`, `BehaviorSignal`) are introduced here, together with the behaviour that uses them.
 
 - Demo target app (Next.js `/demo`) rendering from a seeded **UI Spec** via a component registry — Generation 0, with deliberate friction.
 - Telemetry SDK + `POST /api/v1/telemetry/events` (202) → queue emulator → telemetry worker.
