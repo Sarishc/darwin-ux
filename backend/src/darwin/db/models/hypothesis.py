@@ -33,7 +33,8 @@ RUN_STATUSES = (
     "invalid_output",
     "grounding_failed",
 )
-HYPOTHESIS_STATUSES = ("proposed",)  # critique / approval states arrive with those steps
+# proposed: generated; accepted / rejected: the outcome of a research run (Step 10).
+HYPOTHESIS_STATUSES = ("proposed", "accepted", "rejected")
 CONFIDENCE_LEVELS = ("low", "medium", "high")
 
 

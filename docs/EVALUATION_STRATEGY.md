@@ -129,6 +129,22 @@ With a fake provider these numbers measure DarwinUX's **control layer**, not mod
 
 ### Level 3: Agent Evaluation
 
+**Implemented (Step 10), deterministic part:** `make research-eval` runs the golden research set (`backend/tests/evals/golden/research.json`, 19 cases) through the real graph with the `FakeLLMProvider`, in one rolled-back transaction, and writes `artifacts/research-eval.json` (`darwinux.research-eval.v1`, git-ignored). Cases cover both signals accepting, empty memory, a refinement that recovers an anchor source (a support-ticket distractor corpus), a refinement that cannot, critique → human review, human approve / reject via resume, low confidence → human, critique reject, malformed critique, provider failure on either call, Step 9 grounding failure, three budget exhaustions (LLM calls, retrieval attempts, graph steps), and prompt injection (treated as evidence; a critic that obeys it). Each case states the terminal status and stop reason, **the path** (an exact node sequence, or required / forbidden nodes), retrieval attempts, LLM calls and the hypothesis's final state — never prose. Reported separately:
+
+| Metric | Definition | Step 10 (fake) |
+|---|---|---|
+| Workflow success rate | runs ending `succeeded` / cases — descriptive, set by the case mix | 5/19 |
+| Terminal-state accuracy | final status (+ stop reason) as expected / cases | 19/19 |
+| Avg retrieval attempts / avg LLM calls | per run | 1.11 / 1.42 |
+| Unnecessary second-retrieval rate | runs that retrieved twice / cases marked "one retrieval is enough" | 0/4 |
+| Human-review routing accuracy | reached `human_review` exactly when expected / cases | 19/19 |
+| Budget-exhaustion handling | budget cases ending as expected, within their budget / budget cases | 3/3 |
+| Trajectory structural validity | every step an allowed transition (checked per invocation) / cases | 19/19 |
+| Trajectory expectations met | exact / required / forbidden nodes as expected / cases | 19/19 |
+| All runs within budget | counters ≤ budget and provider requests = counted LLM calls / cases | 19/19 |
+
+With a fake provider these measure the **orchestration** — routing, bounds, persistence — not model judgment. Trajectory evaluation is deterministic here (against the transition table and the golden paths); LLM-as-judge trajectory review remains future work for open-ended agents.
+
 **What we're evaluating:** Does the Research Agent (and the overall LangGraph orchestration) make good decisions and take efficient paths?
 
 | Metric | Type | What It Measures |

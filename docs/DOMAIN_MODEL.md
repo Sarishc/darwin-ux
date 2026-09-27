@@ -172,6 +172,16 @@ A record of a retrieval operation against Product Memory.
 
 ---
 
+### Research runs — implemented (Step 10)
+
+As built in migration 0006 (the AgentRun design below; `research_run` is its first concrete form):
+
+- **research_run** — one explicit execution of `research_graph.v1` for one signal; a resume continues it. `id`, `signal_id` (FK), `graph_version`, `status` (CHECK: `running`, `waiting_for_human`, `succeeded`, `insufficient_evidence`, `rejected`, `failed`), `stop_reason` (NULL **iff** running — e.g. `critique_accept`, `no_context`, `insufficient_after_refinement`, `llm_budget_exhausted`, `human_approved`), `current_node`, `queries` (code-generated retrieval queries run), `retrieval_attempts` (CHECK ≤ 2), `llm_calls` (CHECK ≤ 2), `steps` (CHECK ≤ 12), `input_tokens` / `output_tokens` / `calls_without_usage` (sums of reported counts — fake estimates today), `hypothesis_run_id` / `hypothesis_id` (FKs), `critique` (validated findings only), `review_reason`, `human_decision` (CHECK `approve | reject`), `budget` (the limits used), `elapsed_ms`, `created_at`, `updated_at`, `completed_at` (NULL **iff** running or waiting). Index on `signal_id`.
+- **research_step** — the trajectory: one row per executed node. `id`, `run_id` (FK, cascade), `sequence` (UNIQUE per run, continues across a resume), `node`, `outcome` (short code-defined label), `detail` (compact JSON: attempt, query, filters, excerpt ids/sources/scores, statuses, tokens, the critique call's provider/model/request version/error types), `created_at`. Never chunk text, prompts, model output or reasoning.
+- **hypothesis.status** is widened to `proposed | accepted | rejected`: a research run that succeeds accepts its hypothesis, a rejection (critique or human) rejects it, anything else leaves it `proposed`.
+
+Why two tables: the run is the current, resumable summary; the steps are the append-only audit of the path.
+
 ### AgentRun
 
 A complete execution of the agent orchestration graph.
@@ -267,7 +277,7 @@ A proposed explanation for observed UX friction.
 | confidence | float | Agent's confidence in this hypothesis |
 | status | enum | Lifecycle state |
 
-**Lifecycle:** `proposed` → `accepted` | `rejected` | `needs_more_evidence`
+**Lifecycle:** `proposed` → `accepted` | `rejected` | `needs_more_evidence` (Step 10 implements `proposed` → `accepted` | `rejected`)
 
 ---
 

@@ -12,9 +12,11 @@ It is not a chatbot wrapper. It is a closed-loop system where software evolves t
 
 ## Status
 
-**Step 9 — LLM Layer + Grounded Hypothesis Generation** (Steps 0–8 complete)
+**Step 10 — LangGraph Research Workflow** (Steps 0–9 complete)
 
-One bounded, structured LLM call per signal: a BehaviorSignal is turned into a deterministic retrieval query, Product Memory evidence is bundled (marked untrusted), a versioned `hypothesis.v1` request goes through a DarwinUX-owned provider port, and the output must pass a strict schema and deterministic grounding checks (cited ids ⊆ supplied excerpts, allowed component) before it becomes a Hypothesis. Every attempt is an audited `hypothesis_run`. Only a deterministic `FakeLLMProvider` exists — no real model, no agents, no Jev, no Muse, no mutations. An 18-case golden set measures the control layer.
+A bounded LangGraph graph (`research_graph.v1`) orchestrates the existing services for one signal: deterministic Product Memory retrieval with a sufficiency heuristic and at most one refinement, the Step 9 grounded hypothesis, one strict critique call, then accept, pause for human review (resumed from the CLI with an allowlisted decision), reject, or stop. Hard budgets (2 retrievals, 2 LLM calls, 12 steps) are enforced in code and by database CHECKs; every run and step is persisted (`research_run`, `research_step`). A 19-case golden set checks outcomes **and** trajectories. Still only a deterministic `FakeLLMProvider` — no Jev, no Muse, no mutations, no experiments.
+
+Step 9 — hypothesis generation: one bounded, structured LLM call per signal: a BehaviorSignal is turned into a deterministic retrieval query, Product Memory evidence is bundled (marked untrusted), a versioned `hypothesis.v1` request goes through a DarwinUX-owned provider port, and the output must pass a strict schema and deterministic grounding checks (cited ids ⊆ supplied excerpts, allowed component) before it becomes a Hypothesis. Every attempt is an audited `hypothesis_run`. An 18-case golden set measures that control layer.
 
 Product Memory (Step 8, retrieval only): an allowlisted corpus of DarwinUX docs and the Generation 0 UI Spec, chunked deterministically, embedded through a provider port (a deterministic hashing baseline — no real model yet), stored in PostgreSQL + pgvector, retrieved by exact cosine search with SQL filters, and measured on a 26-query golden set (Precision@K, Recall@K, MRR) across chunking configs.
 
@@ -28,6 +30,7 @@ make web    # terminal 3 — http://localhost:3000/demo (first: make web-install
 make web-check  # frontend lint, type check, tests, production build
 make memory-ingest && make memory-eval   # Product Memory: ingest corpus, evaluate retrieval
 make hypothesis-generate && make hypothesis-eval   # hypothesis for the latest signal; golden eval
+make research-run && make research-eval            # research workflow for the latest signal; golden eval
 make check  # format check, lint, type check, unit tests
 make db-start && make db-setup && make migrate   # local PostgreSQL 17
 make test-integration

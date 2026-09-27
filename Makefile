@@ -14,7 +14,8 @@ PG_LOG = $(shell brew --prefix)/var/log/$(PG_FORMULA).log
 .PHONY: help sync api worker web web-install web-check test lint format typecheck check \
 	db-start db-stop db-status db-logs db-setup \
 	migrate migration-status migrate-sql queue-status test-integration \
-	memory-ingest memory-query memory-eval hypothesis-generate hypothesis-eval
+	memory-ingest memory-query memory-eval hypothesis-generate hypothesis-eval \
+	research-run research-resume research-eval
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-17s %s\n", $$1, $$2}'
@@ -106,6 +107,20 @@ hypothesis-generate: ## Hypothesis for SIGNAL_ID=<uuid>, else the latest [SIGNAL
 
 hypothesis-eval: ## Golden hypothesis eval with the fake provider (rolled back)
 	$(BACKEND) uv run $(ENV_FILE) python -m darwin.hypotheses.evaluation
+
+# ---- Research workflow (bounded LangGraph graph; FakeLLMProvider only in Step 10) --
+
+research-run: ## Research SIGNAL_ID=<uuid> or the latest [SIGNAL_TYPE=...] [CRITIQUE_MODE=human_review]
+	$(BACKEND) uv run $(ENV_FILE) python -m darwin.research.cli run \
+		$(if $(SIGNAL_ID),--signal-id $(SIGNAL_ID)) $(if $(SIGNAL_TYPE),--type $(SIGNAL_TYPE)) \
+		$(if $(FAKE_MODE),--fake-mode $(FAKE_MODE)) $(if $(CRITIQUE_MODE),--critique-mode $(CRITIQUE_MODE))
+
+research-resume: ## Resume a run waiting for review: RUN_ID=<uuid> DECISION=approve|reject
+	$(BACKEND) uv run $(ENV_FILE) python -m darwin.research.cli resume \
+		--run-id "$(RUN_ID)" --decision "$(DECISION)"
+
+research-eval: ## Golden research-workflow eval: outcomes + trajectories (rolled back)
+	$(BACKEND) uv run $(ENV_FILE) python -m darwin.research.evaluation
 
 test-integration: ## Integration tests against local darwin_test (needs PostgreSQL 17)
 	$(BACKEND) uv run $(ENV_FILE) pytest -m integration

@@ -32,7 +32,8 @@ MAX_EVIDENCE_REFERENCES = 5
 _CODE_OR_MARKUP = re.compile(r"```|<\s*/?\s*[A-Za-z][^>]*>")
 
 
-def _plain_text(value: str) -> str:
+def plain_text(value: str) -> str:
+    """Reject code fences, HTML tags and control characters (shared with the Step 10 critique)."""
     if _CODE_OR_MARKUP.search(value):
         raise PydanticCustomError("code_or_markup", "code or markup is not allowed")
     if any(ord(ch) < 32 and ch not in "\n\t" for ch in value):
@@ -64,12 +65,12 @@ class HypothesisDraft(BaseModel):
     def _one_sentence(cls, value: str) -> str:
         if "\n" in value:
             raise PydanticCustomError("multiline", "statement must be a single line")
-        return _plain_text(value)
+        return plain_text(value)
 
     @field_validator("rationale")
     @classmethod
     def _rationale(cls, value: str) -> str:
-        return _plain_text(value)
+        return plain_text(value)
 
     @field_validator("affected_component")
     @classmethod
@@ -93,7 +94,7 @@ class HypothesisDraft(BaseModel):
         for item in value:
             if not 5 <= len(item) <= 300:
                 raise PydanticCustomError("limitation_length", "limitation length out of range")
-            _plain_text(item)
+            plain_text(item)
         return value
 
 
@@ -118,26 +119,40 @@ class OutputCheck:
     errors: list[dict[str, str]] = field(default_factory=list)
 
 
+def parse_json_object(output_text: str) -> tuple[dict[str, Any] | None, str | None]:
+    """(object, None) for one JSON object; (None, "not_json" | "not_object") otherwise."""
+    try:
+        parsed = json.loads(output_text)
+    except (json.JSONDecodeError, RecursionError):
+        return None, "not_json"
+    if not isinstance(parsed, dict):
+        return None, "not_object"
+    return parsed, None
+
+
+def error_list(error: ValidationError) -> list[dict[str, str]]:
+    """(location, type) pairs only — never the offending input values."""
+    return [
+        {"loc": ".".join(str(part) for part in e["loc"]), "type": e["type"]}
+        for e in error.errors(include_input=False, include_url=False)
+    ]
+
+
 def _unparseable(kind: str) -> OutputCheck:
     return OutputCheck("invalid_output", None, kind, [{"loc": "", "type": kind}])
 
 
 def check_output(output_text: str, bundle: EvidenceBundle) -> OutputCheck:
     """Parse -> schema -> grounding. Pure and deterministic; no model involved."""
-    try:
-        parsed = json.loads(output_text)
-    except (json.JSONDecodeError, RecursionError):
-        return _unparseable("not_json")
-    if not isinstance(parsed, dict):
-        return _unparseable("not_object")
+    parsed, unparseable = parse_json_object(output_text)
+    if parsed is None:
+        assert unparseable is not None
+        return _unparseable(unparseable)
 
     try:
         draft = HypothesisDraft.model_validate(parsed)
     except ValidationError as error:
-        errors = [
-            {"loc": ".".join(str(part) for part in e["loc"]), "type": e["type"]}
-            for e in error.errors(include_input=False, include_url=False)
-        ]
+        errors = error_list(error)
         return OutputCheck("invalid_output", None, errors[0]["type"], errors)
 
     grounding = grounding_errors(draft, bundle)

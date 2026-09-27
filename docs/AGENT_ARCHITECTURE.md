@@ -46,7 +46,49 @@ BehaviorSignal (canonical only)
 
 **Repeat calls.** Every explicit generation is a new run. Model calls are neither deterministic nor free, so nothing pretends to deduplicate them; the fake is deterministic only so tests can be exact.
 
-**Still future:** the Research agent (LLM-written queries, retrieval loops), the Critic, LangGraph orchestration, Jev gates, Muse mutation generation, LLM-as-judge evaluation, a real provider.
+**Still future (after Step 9):** see Step 10 below for the orchestration, critique and human review that now wrap this call.
+
+## Current Implementation (Step 10): Bounded Research Workflow
+
+The first real orchestration: a LangGraph `StateGraph` (`research_graph.v1`, `darwin/research/graph.py`) that **orchestrates existing services and replaces none of them**. It ends at a researched hypothesis and a decision. No Jev, no Muse, no MutationSpec, no experiments, no deployment.
+
+```
+START ─> load_signal ─> retrieve ─> assess_evidence ─┬─> generate_hypothesis ─> critique_hypothesis ─┬─> finalize ─> END
+             ▲              ▲                        ├─> refine_query ──┐                            └─> human_review ─> END (run waits)
+             │              └────────────────────────┼──────────────────┘   (the only cycle, ≤ 1 pass)
+             │                                       └─> finalize
+START ─> apply_human_decision ─> finalize ─> END     (a resume: same graph, entered with a human decision)
+```
+
+| Node | Calls | Decides |
+|---|---|---|
+| `load_signal` | canonical BehaviorSignal; the **Step 9 deterministic query builder** | — |
+| `retrieve` | **Step 8** `retrieve()`; **Step 9** `build_evidence_bundle()` | — |
+| `assess_evidence` | deterministic **sufficiency heuristic** (`research/planning.py`) | generate / refine (once) / stop |
+| `refine_query` | deterministic refinement: UI-Spec-targeted query + code-chosen SQL filters | → retrieve |
+| `generate_hypothesis` | **Step 9** `generate_from_bundle()` (request, strict schema, grounding, HypothesisRun) | critique / stop |
+| `critique_hypothesis` | `hypothesis_critique.v1` through the **same** `LLMProvider` port | accept / human review / reject / stop |
+| `human_review` | — | pause (`waiting_for_human`) |
+| `apply_human_decision` | — | approve → succeeded, reject → rejected |
+| `finalize` | hypothesis → `accepted` / `rejected` for those outcomes | END |
+
+**Routing.** Each node writes the next node into `route`; conditional edges accept only the targets in `TRANSITIONS` — the same table the evaluation checks trajectories against. Node code, not the model, chooses routes: model output only ever arrives as a validated verdict enum.
+
+**Budgets** (`research/budget.py`, hard caps in code *and* as database CHECKs; a run may be given a tighter budget, never a looser one): 2 retrieval attempts, 1 refinement, 1 hypothesis generation, 1 critique, **2 LLM calls in total**, 12 graph steps (the longest legal path is 11). The cycle is bounded by `retrieval_attempts` and `refinements`; separately, the node wrapper forces `finalize` one step before the step cap; LangGraph's recursion limit is only a backstop. A test runs a deliberately looping graph and shows it still ends at `finalize` (`step_budget_exhausted`).
+
+**Sufficiency (a deterministic heuristic, not semantic truth).** After Step 9's relevance floor: ≥ 2 excerpts, from ≥ 2 sources, including an *anchor* source — the UI Spec (what the component is) or the detector definitions (why the signal fired). Empty memory stops immediately (`no_context`, nothing to refine against). Otherwise one refinement: a signal-specific UI-Spec query, plus `source_type = ui_spec, generation = 0` when no anchor was found; its top 3 results are merged in front of the first attempt's. No model writes queries or filters yet.
+
+**Critique.** Receives the hypothesis (marked untrusted — it is model output), the signal facts and *only the cited excerpts*; returns `verdict` (`accept | human_review | reject`), a one-line `summary`, and ≤ 5 each of `issues`, `unsupported_claims`, `missing_evidence`. Strict schema; a `reasoning` field is rejected like any unknown field; the request never asks for reasoning. An `accept` on a **low-confidence** hypothesis still goes to a human (a deterministic rule).
+
+**Human review.** No LangGraph checkpointer: `interrupt()` needs one, the Postgres checkpointer is a separate package, and it would couple the schema to LangGraph internals. Instead the run is persisted as `waiting_for_human` and the invocation ends. `make research-resume RUN_ID=… DECISION=approve|reject` (an allowlist, never free text) atomically moves the run `waiting_for_human → running` (so a duplicate or concurrent resume is refused), rebuilds a small state from `research_run`, and re-enters the graph at `apply_human_decision`. A resume cannot call a model or retrieve: its dependencies are stubs that raise.
+
+**Retry semantics.** Graph loop = one evidence refinement inside a run. Provider retry = none in Step 10 (a failed call ends the run with `*_provider_error`). New run = every explicit `research-run`. Each LLM call is visible: generation in its HypothesisRun, critique in its `research_step`.
+
+**Audit.** `research_run` (status, stop reason, counters, tokens, elapsed, ids, critique findings, budget used) + `research_step` (one row per executed node: outcome and compact metadata). No prompts, chunk text, model output or reasoning.
+
+**Future span mapping (OpenTelemetry not added yet).** One span per graph invocation named `research_run` (attributes: `research_run_id`, `signal_id`, `graph_version`, status); a child span per `research_step` (`node`, `sequence`, `outcome`); `retrieve` spans nest Step 8 retrieval; `generate_hypothesis` and `critique_hypothesis` nest a `gen_ai` span with provider, model, request version and token counts. A resume is a new trace linked to the first by `research_run_id` (span link), not one trace spanning a human wait.
+
+**Still future:** LLM-written queries (the full Research agent), a real provider, Jev gates, Muse mutation generation, MutationSpec, experiments.
 
 ## Responsibility Analysis
 
@@ -84,6 +126,8 @@ Telemetry events
 ---
 
 ### 2. Evidence Research (Research Agent)
+
+> **Partly implemented (Step 10):** the retrieval loop exists as graph nodes with a *deterministic* query builder, sufficiency heuristic and one refinement. LLM-written queries and tools are not built.
 
 **Proposed name:** Research Agent
 
@@ -161,6 +205,8 @@ hypothesis = await llm.generate_structured(
 ---
 
 ### 4. Hypothesis Critique (Critic)
+
+> **Implemented (Step 10)** as one structured call on the same provider port (`hypothesis_critique.v1`), with a different request, not a different provider (OPEN_QUESTIONS.md N2). See "Current Implementation (Step 10)".
 
 **Proposed name:** Critic Agent
 

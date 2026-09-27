@@ -1,6 +1,6 @@
 # DarwinUX — Development Environment
 
-> **Status (Step 9):** hypothesis generation (signal → Product Memory evidence → one structured call through an LLM port → strict validation → `hypothesis_run` / `hypothesis`; deterministic `FakeLLMProvider` only); Product Memory (retrieval only: allowlisted docs → chunks → embeddings in pgvector → filtered vector search → golden-set evaluation); a Next.js demo app (`/demo`, Generation 0) rendered from a validated UI Spec, with a browser telemetry SDK; the FastAPI *producer*; a separate worker (*consumer*) connected by a durable PostgreSQL-backed queue; deterministic behaviour signals; PostgreSQL 17 (telemetry, signals, queue, Product Memory, hypotheses); backend and frontend tests. No Docker, no AWS, no real LLM provider, no agents yet.
+> **Status (Step 10):** a bounded LangGraph research workflow (retrieval → sufficiency heuristic → ≤ 1 refinement → Step 9 hypothesis → critique → accept / human review via CLI resume / reject / stop; `research_run` / `research_step`); hypothesis generation (signal → Product Memory evidence → one structured call through an LLM port → strict validation → `hypothesis_run` / `hypothesis`; deterministic `FakeLLMProvider` only); Product Memory (retrieval only: allowlisted docs → chunks → embeddings in pgvector → filtered vector search → golden-set evaluation); a Next.js demo app (`/demo`, Generation 0) rendered from a validated UI Spec, with a browser telemetry SDK; the FastAPI *producer*; a separate worker (*consumer*) connected by a durable PostgreSQL-backed queue; deterministic behaviour signals; PostgreSQL 17 (telemetry, signals, queue, Product Memory, hypotheses, research runs); backend and frontend tests. No Docker, no AWS, no real LLM provider, no Jev, no Muse yet.
 
 ## 1. Prerequisites
 
@@ -156,6 +156,9 @@ A small root `Makefile` wraps the real commands. It only delegates to uv — uv 
 | `make memory-eval` | `python -m darwin.memory.evaluation` | Golden retrieval eval (P@5, R@5, MRR) for each chunking config, in rolled-back transactions; writes `artifacts/retrieval-eval.json` (git-ignored) |
 | `make hypothesis-generate [SIGNAL_ID=…] [SIGNAL_TYPE=…]` | `python -m darwin.hypotheses.generate` | One hypothesis for a stored signal (default: the latest) with the FakeLLMProvider; records a `hypothesis_run` |
 | `make hypothesis-eval` | `python -m darwin.hypotheses.evaluation` | Golden hypothesis eval (18 cases, fake provider, rolled back); writes `artifacts/hypothesis-eval.json` (git-ignored) |
+| `make research-run [SIGNAL_ID=…] [SIGNAL_TYPE=…] [CRITIQUE_MODE=…]` | `python -m darwin.research.cli run` | One research run (LangGraph, fake provider); may end waiting for human review |
+| `make research-resume RUN_ID=… DECISION=approve\|reject` | `python -m darwin.research.cli resume` | Apply a human decision to a run waiting for review (allowlisted decisions only) |
+| `make research-eval` | `python -m darwin.research.evaluation` | Golden research eval: outcomes + trajectories (19 cases, rolled back); writes `artifacts/research-eval.json` (git-ignored) |
 
 Without make, run the same commands from `backend/`, e.g.:
 
@@ -225,7 +228,9 @@ nvm alias default 24
 | A real embedding model / provider credentials | When chosen (OPEN_QUESTIONS.md N3) | The hashing baseline is deterministic and offline; a real model must beat it on the golden set |
 | HNSW vector index | Larger corpus | Exact search over ~120 chunks is fast and has perfect recall |
 | A real LLM provider SDK / credentials | When chosen (OPEN_QUESTIONS.md N1) | The port + FakeLLMProvider prove the control layer offline; a real provider must pass `make hypothesis-eval` |
-| LangGraph, agents, LLM-as-judge | Later steps | Step 9 is one bounded call; judges need a real provider and agreement checks |
+| LangGraph Postgres checkpointer | Not planned yet (OPEN_QUESTIONS.md N15) | Resume needs only ids and counters DarwinUX already persists |
+| LangChain agents, tools, chains, loaders | Not planned | The graph orchestrates DarwinUX services directly; no tool registry |
+| LLM-as-judge | Later | Judges need a real provider and agreement checks |
 | Dockerfile for the app | Later step | Running on the host is faster to iterate on |
 | Evolution Lab (`/lab`), synthetic user simulator | Later steps | Demo surface and telemetry come first |
 | Tailwind, UI component libraries, state/data-fetching libraries | Not planned for the demo | CSS custom properties are the design tokens; `fetch` is enough |
@@ -265,6 +270,16 @@ backend/src/darwin/
 ├── llm/
 │   ├── port.py        # LLMProvider protocol, request/result/usage, error types
 │   └── fake.py        # FakeLLMProvider: deterministic, one mode per failure
+├── research/          # bounded LangGraph research workflow (Step 10)
+│   ├── budget.py      # hard caps; ResearchBudget (tighter only)
+│   ├── state.py       # ResearchState (typed graph state)
+│   ├── planning.py    # sufficiency heuristic, one refinement, merge
+│   ├── critique.py    # hypothesis_critique.v1: strict CritiqueDraft + request
+│   ├── graph.py       # nodes, TRANSITIONS, build_graph (research_graph.v1)
+│   ├── ledger.py      # research_run / research_step writes after every node
+│   ├── service.py     # run_research(), resume_research()
+│   ├── cli.py         # make research-run / research-resume
+│   └── evaluation.py  # golden outcomes + trajectories (make research-eval)
 ├── hypotheses/        # one bounded structured call per signal (Step 9)
 │   ├── queries.py     # signal -> deterministic retrieval query
 │   ├── evidence.py    # EvidenceBundle: safe signal facts + untrusted excerpts
@@ -747,6 +762,25 @@ make hypothesis-eval                                 # golden set, fake provider
 No signal yet? Open `/demo`, click **Get started** on Team Pro several times quickly (it gives delayed feedback), and let `make worker` process the events. Failure modes can be tried by hand: `cd backend && uv run --env-file ../.env python -m darwin.hypotheses.generate --fake-mode hallucinated_reference` (see `--help`). Each call adds a `hypothesis_run` row to `darwin_dev`; only successes add a `hypothesis`.
 
 The command prints the evidence ids, sources and the hypothesis to your terminal; the log line (stderr, JSON) carries only ids, counts, status, latency and token counts — never the prompt, excerpt text or model output.
+
+---
+
+## 18. Research Workflow (Step 10)
+
+A bounded LangGraph graph around the Step 8 and Step 9 services, with the deterministic `FakeLLMProvider` (hypothesis and critique calls). Design, budgets and routing: AGENT_ARCHITECTURE.md, "Current Implementation (Step 10)".
+
+```bash
+make research-run                                    # latest canonical signal
+make research-run SIGNAL_TYPE=rage_click             # latest of one type
+make research-run SIGNAL_ID=<signal uuid>
+make research-run CRITIQUE_MODE=human_review         # force the human-review path (fake critic)
+make research-resume RUN_ID=<run uuid> DECISION=approve   # or DECISION=reject
+make research-eval                                   # golden outcomes + trajectories, rolled back
+```
+
+`FAKE_MODE=` / `CRITIQUE_MODE=` select fake behaviours (`python -m darwin.research.cli run --help`). The CLI prints the trajectory, budget use, hypothesis and critique; logs carry ids, node names, outcomes, counters and token counts only.
+
+Dependencies: `langgraph` (1.2.x) is the only direct addition. It brings `langchain-core` (and through it `langsmith`), `langgraph-checkpoint`, `langgraph-prebuilt` and `langgraph-sdk` transitively; DarwinUX imports none of them. LangSmith traces only when its environment variables enable it — research **refuses to run** if `LANGSMITH_TRACING` / `LANGCHAIN_TRACING_V2` (or similar) are set, because that would ship evidence text to a third party.
 
 ---
 

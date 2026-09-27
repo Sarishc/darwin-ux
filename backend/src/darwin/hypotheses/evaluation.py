@@ -152,9 +152,14 @@ def load_dataset(path: Path = GOLDEN_PATH) -> HypothesisDataset:
 
 def case_signal(case: HypothesisCase) -> BehaviorSignal:
     """A synthetic canonical signal for one case (exists only inside the rolled-back run)."""
-    if case.signal_type == detectors.RAGE_CLICK:
+    return synthetic_signal(f"signal:{case.id}", case.signal_type, case.component)
+
+
+def synthetic_signal(key: str, signal_type: str, component: str | None) -> BehaviorSignal:
+    """A deterministic synthetic signal (uuid5 of `key`), shaped like a detector's output."""
+    if signal_type == detectors.RAGE_CLICK:
         evidence: dict[str, Any] = {
-            "component": case.component,
+            "component": component,
             "count": detectors.RAGE_CLICK_THRESHOLD,
             "event_ids": [],
             "threshold": detectors.RAGE_CLICK_THRESHOLD,
@@ -171,10 +176,10 @@ def case_signal(case: HypothesisCase) -> BehaviorSignal:
         }
         duration = timedelta(seconds=6)
     return BehaviorSignal(
-        signal_id=uuid.uuid5(CASE_NAMESPACE, f"signal:{case.id}"),
-        signal_type=case.signal_type,
+        signal_id=uuid.uuid5(CASE_NAMESPACE, key),
+        signal_type=signal_type,
         detector_version="1",
-        session_id=uuid.uuid5(CASE_NAMESPACE, f"session:{case.id}"),
+        session_id=uuid.uuid5(CASE_NAMESPACE, f"session:{key}"),
         window_start=WINDOW_START,
         window_end=WINDOW_START + duration,
         evidence={k: v for k, v in evidence.items() if v is not None},

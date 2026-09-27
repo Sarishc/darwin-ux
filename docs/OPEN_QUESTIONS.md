@@ -56,7 +56,7 @@ Decide during the step that needs it; a sensible default is given.
 | # | Question | Default until decided |
 |---|---|---|
 | N1 | Initial LLM provider/model for hypothesis, critique, research, judges | Step 9 ships the port and a deterministic `FakeLLMProvider` only. Choose one provider behind the port on structured-output support and cost, and require it to pass `make hypothesis-eval` before use |
-| N2 | Critic on a different provider than the generator? | Same provider, different prompt, in v1; test cross-provider later |
+| N2 | Critic on a different provider than the generator? | Step 10: same port and provider, separate request (`hypothesis_critique.v1`); test cross-provider once a real provider exists |
 | N3 | Embedding model and dimension | Step 8 ships only a deterministic hashing baseline (384-d, recorded per document). Choosing a real model means a migration if its dimension differs, a full re-embed, and beating the baseline on the golden set |
 | N4 | Local queue (no Docker locally) | A native SQS-compatible emulator or a Postgres-backed queue behind the queue port; decide in the telemetry step |
 | N5 | Local trace viewer | Jaeger via OTel collector |
@@ -68,6 +68,8 @@ Decide during the step that needs it; a sensible default is given.
 | N11 | AWS region and monthly budget ceiling | Nearest region; budget alert set before the first `apply` |
 | N12 | Data retention for user events and model payloads | 90 days raw events locally; explicit CloudWatch retention; revisit before any real users |
 | N13 | Reranker | None until retrieval metrics show precision is the bottleneck |
+| N15 | LangGraph checkpointing for human-in-the-loop | Step 10 uses DarwinUX-owned persistence (`research_run`) and re-enters the graph on resume; revisit LangGraph's Postgres checkpointer if graphs grow long-lived mid-node state |
+| N16 | Stale `running` research runs after a crash | Not swept yet: the last `research_step` shows where it stopped; add a sweeper (mark `failed`) before running research in a worker |
 | N14 | Terraform state locking mechanism | S3 backend native locking if the chosen Terraform version supports it |
 
 ## FUTURE RESEARCH

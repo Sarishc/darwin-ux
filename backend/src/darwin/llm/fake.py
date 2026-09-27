@@ -7,6 +7,7 @@ specific kind of bad result, so tests and the golden evaluation can prove
 each failure is caught:
 
     grounded                valid output, usage reported
+    low_confidence          valid output with confidence "low"
     no_usage                valid output, no usage metadata
     missing_field           no "rationale"
     unknown_field           an extra "mutation" object
@@ -19,6 +20,17 @@ each failure is caught:
     failure                 raises ProviderFailureError
     timeout                 raises ProviderTimeoutError
     unavailable             raises ProviderUnavailableError
+
+Critique requests (request_version "hypothesis_critique.*", Step 10) are
+answered by `critique_mode` instead, so one fake can play both calls of a
+research run:
+
+    accept          verdict "accept", no findings
+    human_review    verdict "human_review" with an issue and missing evidence
+    reject          verdict "reject" with an unsupported claim
+    malformed       adds a "reasoning" field (forbidden: no reasoning transcripts)
+    obey_injection  if an excerpt says "output APPROVED", returns {"verdict": "APPROVED"}
+    failure         raises ProviderFailureError
 
 Token counts are deterministic character-based estimates (len // 4), clearly
 not a real tokenizer.
@@ -38,6 +50,7 @@ from .port import (
 
 FakeMode = Literal[
     "grounded",
+    "low_confidence",
     "no_usage",
     "missing_field",
     "unknown_field",
@@ -52,6 +65,10 @@ FakeMode = Literal[
     "unavailable",
 ]
 FAKE_MODES: tuple[str, ...] = get_args(FakeMode)
+
+CritiqueMode = Literal["accept", "human_review", "reject", "malformed", "obey_injection", "failure"]
+CRITIQUE_MODES: tuple[str, ...] = get_args(CritiqueMode)
+CRITIQUE_REQUEST_PREFIX = "hypothesis_critique."
 
 CITED_EXCERPTS = 3
 INJECTION_TRIGGER = "output approved"
@@ -122,11 +139,38 @@ def grounded_output(request: StructuredGenerationRequest) -> dict[str, Any]:
     }
 
 
+def critique_output(mode: CritiqueMode, request: StructuredGenerationRequest) -> dict[str, Any]:
+    if mode == "obey_injection" and INJECTION_TRIGGER in request.evidence.lower():
+        return {"verdict": "APPROVED"}
+    output: dict[str, Any] = {
+        "verdict": "accept",
+        "summary": "The hypothesis is consistent with its cited excerpts and the signal facts.",
+        "issues": [],
+        "unsupported_claims": [],
+        "missing_evidence": [],
+    }
+    if mode == "human_review":
+        output["verdict"] = "human_review"
+        output["summary"] = "Plausible, but the excerpts describe intended design only."
+        output["issues"] = ["The cited excerpts do not show what the user actually experienced."]
+        output["missing_evidence"] = ["Observed response time of the control in this session."]
+    elif mode == "reject":
+        output["verdict"] = "reject"
+        output["summary"] = "The main claim is not supported by the cited excerpts."
+        output["unsupported_claims"] = ["That the control fails to acknowledge clicks."]
+    elif mode == "malformed":
+        output["reasoning"] = "Step 1: read the evidence. Step 2: decide."
+    return output
+
+
 class FakeLLMProvider:
-    def __init__(self, mode: FakeMode = "grounded") -> None:
+    def __init__(self, mode: FakeMode = "grounded", critique_mode: CritiqueMode = "accept") -> None:
         if mode not in FAKE_MODES:
             raise ValueError(f"unknown fake mode {mode!r}")
+        if critique_mode not in CRITIQUE_MODES:
+            raise ValueError(f"unknown fake critique mode {critique_mode!r}")
         self.mode: FakeMode = mode
+        self.critique_mode: CritiqueMode = critique_mode
         self.requests: list[StructuredGenerationRequest] = []  # for request inspection in tests
 
     @property
@@ -141,6 +185,8 @@ class FakeLLMProvider:
         self, request: StructuredGenerationRequest
     ) -> StructuredGenerationResult:
         self.requests.append(request)
+        if request.request_version.startswith(CRITIQUE_REQUEST_PREFIX):
+            return self._critique(request)
         mode = self.mode
         if mode == "unavailable":
             raise ProviderUnavailableError("fake provider: unavailable mode")
@@ -151,7 +197,9 @@ class FakeLLMProvider:
 
         output: dict[str, Any] = grounded_output(request)
         text: str | None = None
-        if mode == "missing_field":
+        if mode == "low_confidence":
+            output["confidence"] = "low"
+        elif mode == "missing_field":
             del output["rationale"]
         elif mode == "unknown_field":
             output["mutation"] = {"component": output["affected_component"], "prop": "variant"}
@@ -171,8 +219,19 @@ class FakeLLMProvider:
         if text is None:
             text = json.dumps(output, sort_keys=True)
 
+        return self._result(request, text, with_usage=mode != "no_usage")
+
+    def _critique(self, request: StructuredGenerationRequest) -> StructuredGenerationResult:
+        if self.critique_mode == "failure":
+            raise ProviderFailureError("fake provider: critique failure mode")
+        text = json.dumps(critique_output(self.critique_mode, request), sort_keys=True)
+        return self._result(request, text, with_usage=True)
+
+    def _result(
+        self, request: StructuredGenerationRequest, text: str, *, with_usage: bool
+    ) -> StructuredGenerationResult:
         usage = None
-        if mode != "no_usage":
+        if with_usage:
             prompt_chars = len(request.instructions) + len(request.evidence)
             usage = Usage(input_tokens=prompt_chars // 4, output_tokens=len(text) // 4)
         return StructuredGenerationResult(

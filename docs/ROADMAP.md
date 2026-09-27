@@ -87,7 +87,10 @@ Built: DarwinUX-owned LLM port + deterministic `FakeLLMProvider`, versioned `hyp
 **Learn:** provider abstraction, structured outputs, prompt management, LLM evaluation.
 **Exit:** golden hypothesis scenarios pass schema + citation checks in CI.
 
-### Step 5 — LangGraph Investigation Workflow (with mock Jev and mock Muse)
+### Step 5 — LangGraph Investigation Workflow (with mock Jev and mock Muse) — research part ✅ (built as "Step 10")
+
+Built: bounded LangGraph research graph (`research_graph.v1`): deterministic query + sufficiency heuristic + one refinement, Step 9 hypothesis, one critique call, human review with CLI resume, `research_run` / `research_step` (migration 0006), 19-case golden eval with trajectory checks. Changed from the plan: DarwinUX-owned persistence instead of LangGraph Postgres checkpointing; decisions via CLI, not API; no Jev, no Muse, no mutation context yet.
+
 
 - `JevProvider` port with `RulesDecider` + `LLMBaselineDecider`; `MuseProvider` port with `FixtureMuse` + `LLMBaselineGenerator`.
 - Graph: triage → research agent (RAG tool) → hypothesize → critique → evidence gate → context → generate → (stub validation) → approval interrupt.

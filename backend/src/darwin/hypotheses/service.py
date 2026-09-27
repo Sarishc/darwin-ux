@@ -6,6 +6,11 @@
       -> parse + schema + grounding checks
       -> persist HypothesisRun (always) + Hypothesis (only if valid), one transaction
 
+`generate_from_bundle` is the part after retrieval. The Step 10 research
+graph calls it with an EvidenceBundle it assembled itself (possibly after a
+refined second retrieval), so the request, schema, grounding and persistence
+logic exist exactly once.
+
 No database transaction is held open during the provider call: reads happen
 in one session, writes in another. Every call creates a new run — repeated
 generation is never deduplicated, because model output is not deterministic
@@ -58,12 +63,23 @@ class GenerationOutcome:
     hypothesis_id: uuid.UUID | None
     bundle: EvidenceBundle
     request: StructuredGenerationRequest | None  # None when the model was not called
+    latency_ms: float | None = None  # None when the model was not called
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+
+    @property
+    def provider_called(self) -> bool:
+        return self.request is not None
 
 
-def _call(
+def call_provider(
     llm: LLMProvider, request: StructuredGenerationRequest
 ) -> tuple[StructuredGenerationResult | None, str | None, str | None, float]:
-    """One provider call. Returns (result, failed_status, error_type, latency_ms)."""
+    """One provider call. Returns (result, failed_status, error_type, latency_ms).
+
+    Provider errors become (None, status, error_type) — never exceptions, never
+    error messages (which could contain anything). Shared with the Step 10 critique.
+    """
     started = time.perf_counter()
     try:
         result = llm.generate_structured(request)
@@ -106,7 +122,16 @@ def generate_hypothesis(
         chunks = retrieve(session, embedder, plan.query, plan.top_k)
         bundle = build_evidence_bundle(signal, plan, chunks, embedder.name, components)
         session.rollback()  # read-only: nothing to keep, and no transaction held during the call
+    return generate_from_bundle(session_factory, signal_id, bundle, llm)
 
+
+def generate_from_bundle(
+    session_factory: SessionFactory,
+    signal_id: uuid.UUID,
+    bundle: EvidenceBundle,
+    llm: LLMProvider,
+) -> GenerationOutcome:
+    """Request -> one provider call -> checks -> HypothesisRun (+ Hypothesis)."""
     request = build_request(bundle)
     result: StructuredGenerationResult | None = None
     check: OutputCheck | None = None
@@ -114,11 +139,11 @@ def generate_hypothesis(
     error_type: str | None
     if not bundle.excerpts:
         status = "insufficient_evidence"
-        error_type = "no_context" if not chunks else "low_relevance"
+        error_type = "no_context" if bundle.retrieved == 0 else "low_relevance"
         sent: StructuredGenerationRequest | None = None
     else:
         sent = request
-        result, status_or_none, error_type, latency_ms = _call(llm, request)
+        result, status_or_none, error_type, latency_ms = call_provider(llm, request)
         if result is not None:
             check = check_output(result.output_text, bundle)
             status = "succeeded" if check.status == "valid" else check.status
@@ -198,4 +223,14 @@ def generate_hypothesis(
             }
         },
     )
-    return GenerationOutcome(run_id, status, error_type, hypothesis_id, bundle, sent)
+    return GenerationOutcome(
+        run_id,
+        status,
+        error_type,
+        hypothesis_id,
+        bundle,
+        sent,
+        latency_ms=latency_ms,
+        input_tokens=usage.input_tokens if usage else None,
+        output_tokens=usage.output_tokens if usage else None,
+    )
