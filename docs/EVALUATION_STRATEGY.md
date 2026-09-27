@@ -196,6 +196,24 @@ With a fake provider these measure the **orchestration** — routing, bounds, pe
 
 **The deterministic checks are the safety floor.** They run fast, they never fail randomly, and they must all pass before any LLM-based evaluation runs. See MUTATION_SAFETY.md.
 
+**Implemented (Step 13), deterministic candidate evaluation:** `make sandbox-eval` runs 29 golden cases (`backend/tests/evals/golden/sandbox.json`) through the REAL harness — 7 real Step 12 chains (fixture and LLM-baseline candidates, including the harmful-but-safe one) and 22 synthetic candidates that bypass Step 12 on purpose (id renames, removed fields, visibility changes, schema-invalid tokens, a duplicated field, corrupted provenance, harness faults). Results (`artifacts/sandbox-eval.json`, `darwinux.sandbox-eval.v1`), each reported separately:
+
+| Metric | candidate_eval.v1 |
+|---|---|
+| Terminal recommendation accuracy | 29/29 |
+| pass / human_review / reject precision · recall | 1.0 · 1.0 / 1.0 · 1.0 / 1.0 · 1.0 (support 5 / 9 / 15) |
+| Harmful-but-safe rejection | 1/1 |
+| UX-intent accuracy | 8/8 |
+| Irrelevant-safe candidates not passed | 4/4 |
+| Accessibility regression detection | 2/2 |
+| Functional regression detection | 4/4 |
+| Provenance-failure containment (no harness call) | 5/5 |
+| Evaluator-failure containment | 3/3 |
+| **FAIL-OPEN COUNT** | **0** |
+| False-reject count | 0 |
+
+The golden labels encode DarwinUX's own policy, so perfect agreement is a specification test of the gate, not proof the rules capture everything a human would notice. No LLM-as-judge is used; design taste, copy and visual quality stay with humans. The render-crash case is simulated (no schema-valid spec crashes today's registry).
+
 **UX improvement is measured by experiments, not by evaluation.** Evaluation predicts whether a mutation might be good. Experiments measure whether it actually is. These are different things and should not be conflated.
 
 **When to run:**

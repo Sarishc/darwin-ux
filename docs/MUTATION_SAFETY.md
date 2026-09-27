@@ -184,6 +184,9 @@ Validation failures from stages 3–5 are returned to Muse as structured feedbac
 
 The sandbox is not deployed infrastructure. In v1 it is: the demo app running locally (or in a CI-style container), opened in a headless browser at a preview route that renders a given spec version by ID. It produces artefacts stored with the EvaluationRun: screenshot, rendered DOM, automated accessibility scan results, and basic render timing. Preview routes are only reachable by the sandbox, never by real traffic.
 
+**What exists today (Step 13).** The v1 sandbox is smaller and stricter than the design above: no browser, no preview route, no server. The candidate stays DATA. The backend writes the source and candidate specs to an OS temp directory; `npm run sandbox-harness` (Vitest + jsdom, `frontend/src/evaluation/harness.tsx`) parses each with the app's **real Zod schema** and renders it through the **real registry and `SpecPage`** — the same allowlisted path the demo uses — with telemetry captured in memory (built, never sent) and timers faked. It reports *facts*: render success and DOM size, axe-core violations (initial and with the signup form revealed; `color-contrast` disabled because jsdom has no layout), labelled inputs / focusable buttons / heading levels, per-CTA click telemetry and reveal delay (0 ms vs 1500 ms), form behaviour (errors on empty submit, summary vs per-field display, inline error on blur, completion) and whether any typed value reached telemetry. The backend's `candidate_eval.v1` policy compares source and candidate facts. No screenshots, no rendered-DOM artefacts, no timing claims about the web: Playwright and a real browser (contrast, layout, visual regression, real timing) are deliberately deferred.
+
+
 ## Risk Tiers and Approval
 
 | Tier | Examples | Approval required |

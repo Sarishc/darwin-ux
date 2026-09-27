@@ -68,7 +68,8 @@ Decide during the step that needs it; a sensible default is given.
 | N7 | How much LangChain to use | Only document loaders/splitters where they save time; LangGraph for orchestration |
 | N8 | Experiment statistics | Fixed-horizon test with pre-registered sample size; sequential testing later |
 | N9 | Evolution Lab authentication | Single-user auth sufficient for approvals; no AI-created approvals ever |
-| N10 | Headless browser / accessibility tooling for the sandbox | A mainstream headless browser automation library + an automated WCAG checker |
+| N10 | Headless browser / accessibility tooling for the sandbox | Step 13 uses jsdom + Testing Library + axe-core (no browser): enough for behaviour, telemetry and rule-based accessibility. A real browser is still needed for colour contrast, layout, visual regression and real timing |
+| N17 | Inline validation without per-field display | The Step 13 harness found that `validation: inline` shows nothing when `error_display` is `summary` (errors only render per-field). Decide whether the renderer should surface inline errors in summary mode, or the mutation surface should couple the two |
 | N11 | AWS region and monthly budget ceiling | Nearest region; budget alert set before the first `apply` |
 | N12 | Data retention for user events and model payloads | 90 days raw events locally; explicit CloudWatch retention; revisit before any real users |
 | N13 | Reranker | None until retrieval metrics show precision is the bottleneck |

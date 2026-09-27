@@ -172,6 +172,12 @@ A record of a retrieval operation against Product Memory.
 
 ---
 
+### Candidate evaluation runs — implemented (Step 13)
+
+As built in migration 0009:
+
+- **candidate_evaluation_run** — one immutable evaluation of one candidate (a trigger refuses UPDATE; repeated evaluations are new rows, so evaluator versions can be compared). `id`, `candidate_spec_id` (FK), `mutation_run_id` (FK; NULL only when provenance failed before a run was identified), `evaluator_version` (`candidate_eval.v1`), `harness_version` (`sandbox_harness.v1`; NULL when the harness never ran), `status` (CHECK `completed | provenance_failed | evaluator_error`), `recommendation` (CHECK `pass | human_review | reject`), `reason_codes` (non-empty, closed list), `category_results` (per category: status, kind, named checks), `error_type` (NULL iff completed), `duration_ms`, `created_at`. CHECKs: `pass` ⇒ completed; provenance_failed ⇒ reject. Index on `candidate_spec_id`. No screenshots, prompts or reasoning.
+
 ### UI Spec versions and mutation runs — implemented (Step 12)
 
 As built in migration 0008 (the UISpecVersion / Mutation design further below; this is the first concrete form):

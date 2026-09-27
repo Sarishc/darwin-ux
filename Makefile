@@ -16,7 +16,7 @@ PG_LOG = $(shell brew --prefix)/var/log/$(PG_FORMULA).log
 	migrate migration-status migrate-sql queue-status test-integration \
 	memory-ingest memory-query memory-eval hypothesis-generate hypothesis-eval \
 	research-run research-resume research-eval decision-run decision-eval \
-	ui-spec-import ui-spec-show mutation-generate mutation-eval
+	ui-spec-import ui-spec-show mutation-generate mutation-eval candidate-eval sandbox-eval
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-17s %s\n", $$1, $$2}'
@@ -149,6 +149,16 @@ mutation-generate: ## Candidate from DECISION_RUN_ID=<uuid> (default: latest pro
 
 mutation-eval: ## Golden mutation eval, each generator separately + frontend Zod check (rolled back)
 	$(BACKEND) uv run $(ENV_FILE) python -m darwin.mutations.evaluation
+
+# ---- Candidate sandbox evaluation (Step 13): safe != useful; nothing is deployed ---------
+
+candidate-eval: ## Evaluate CANDIDATE_SPEC_ID=<uuid> (default: latest candidate) [MUTATION_RUN_ID=<uuid>]
+	$(BACKEND) uv run $(ENV_FILE) python -m darwin.sandbox.cli \
+		$(if $(CANDIDATE_SPEC_ID),--candidate-spec-id $(CANDIDATE_SPEC_ID)) \
+		$(if $(MUTATION_RUN_ID),--mutation-run-id $(MUTATION_RUN_ID))
+
+sandbox-eval: ## Golden candidate-evaluation set through the real sandbox harness (rolled back)
+	$(BACKEND) uv run $(ENV_FILE) python -m darwin.sandbox.evaluation
 
 test-integration: ## Integration tests against local darwin_test (needs PostgreSQL 17)
 	$(BACKEND) uv run $(ENV_FILE) pytest -m integration

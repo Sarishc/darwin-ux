@@ -12,9 +12,11 @@ It is not a chatbot wrapper. It is a closed-loop system where software evolves t
 
 ## Status
 
-**Step 12 — Mutation Generation + Safe MutationSpec** (Steps 0–11 complete)
+**Step 13 — Candidate Sandbox + Mutation Evaluation** (Steps 0–12 complete)
 
-A `proceed` decision can now produce a **candidate** UI Spec — data only. DarwinUX re-checks the decision's provenance (a stale decision is refused before any generator runs), sends a bounded MutationRequest to a MutationGenerator (a deterministic fixture and an LLM-port baseline; Muse is an explicit unimplemented seam — no documented interface), and accepts only a strict MutationSpec: `replace` on semantic `{component_id, property}` targets from an explicit allowlist, with closed-enum or bounded plain-text values. The change is applied in memory, an independent diff proves nothing protected moved, and the candidate is stored as an immutable, content-addressed `ui_spec_version` that the frontend's real Zod schema accepts. Nothing is written to the repository, rendered or deployed. A 28-case evaluation per generator reports zero unsafe candidates.
+Safe is not the same as useful. Every candidate UI Spec can now be evaluated in a sandbox: the frontend's real Zod schema, component registry and `SpecPage` render it in jsdom (telemetry captured in memory, never sent), and a deterministic `candidate_eval.v1` policy scores seven categories separately — schema, render, functional (CTA reveals, telemetry ids, form behaviour, no typed values leaked), accessibility (axe-core + semantic checks, only NEW issues count), regression, UX-intent alignment with the observed problem (confirmed by measured behaviour) and modest structural performance bounds. The result is pass | human_review | reject, stored immutably; `pass` only means eligible for future human approval. The Step 12 harmful-but-safe candidate (`feedback: immediate → delayed`) is rejected. A 29-case golden set reports a fail-open count of zero. No LLM judge, no browser, no deployment.
+
+Step 12 — A `proceed` decision can now produce a **candidate** UI Spec — data only. DarwinUX re-checks the decision's provenance (a stale decision is refused before any generator runs), sends a bounded MutationRequest to a MutationGenerator (a deterministic fixture and an LLM-port baseline; Muse is an explicit unimplemented seam — no documented interface), and accepts only a strict MutationSpec: `replace` on semantic `{component_id, property}` targets from an explicit allowlist, with closed-enum or bounded plain-text values. The change is applied in memory, an independent diff proves nothing protected moved, and the candidate is stored as an immutable, content-addressed `ui_spec_version` that the frontend's real Zod schema accepts. Nothing is written to the repository, rendered or deployed. A 28-case evaluation per generator reports zero unsafe candidates.
 
 Step 11 — After a finished research run, one bounded decision — `proceed` (eligible for a *future* mutation stage, nothing more), `human_review` or `reject` — through a DarwinUX-owned Decider port: a deterministic `rules.v1` baseline, a test double, an LLM-port baseline, and a Jev adapter written against TypeSafe AI's public HTTP docs but never called live (no API key). A fail-closed policy outside every model turns any decider failure or invalid output into `human_review` and downgrades `proceed` when hard preconditions fail; `decision_run` rows and database CHECKs record it. A 27-case evaluation scores each decider separately, with a fail-open count. No Muse, no mutations, no experiments.
 
@@ -37,6 +39,7 @@ make hypothesis-generate && make hypothesis-eval   # hypothesis for the latest s
 make research-run && make research-eval            # research workflow for the latest signal; golden eval
 make decision-run && make decision-eval            # decide the latest finished research run; per-decider eval
 make ui-spec-import && make mutation-generate && make mutation-eval   # candidate UI Spec from the latest proceed
+make candidate-eval && make sandbox-eval             # evaluate the latest candidate; golden sandbox set
 make check  # format check, lint, type check, unit tests
 make db-start && make db-setup && make migrate   # local PostgreSQL 17
 make test-integration

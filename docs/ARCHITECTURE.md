@@ -185,7 +185,7 @@ A fourth, automatic decision exists: **rollback on guardrail breach** (error rat
 
 ## AI / Agent Decision Flow
 
-> **Built so far (Step 12):** research → hypothesis → critique → decision gate → **candidate mutation**: a proceed decision (re-checked for stale provenance) produces a MutationRequest; a MutationGenerator (fixture, LLM-port baseline; Muse is an unimplemented seam) proposes a data-only MutationSpec; DarwinUX validates it against an explicit mutation surface, applies it in memory, proves only allowed leaves changed, and stores an immutable candidate UI Spec (`ui_spec_version`, `mutation_run`) that the frontend's real Zod schema accepts. Sandbox rendering, mutation evaluation, human approval, experiments, promotion and deployment below are still design.
+> **Built so far (Step 13):** research → hypothesis → critique → decision gate → candidate mutation → **sandbox evaluation**: every candidate can be evaluated by rendering it through the real Zod schema, registry and `SpecPage` in a jsdom harness (telemetry captured, never sent) and scored in seven separate categories by a deterministic `candidate_eval.v1` policy — pass | human_review | reject, stored as an immutable `candidate_evaluation_run`; a safe-but-harmful candidate is rejected. Step 12: a proceed decision (re-checked for stale provenance) produces a MutationRequest; a MutationGenerator (fixture, LLM-port baseline; Muse is an unimplemented seam) proposes a data-only MutationSpec; DarwinUX validates it against an explicit mutation surface, applies it in memory, proves only allowed leaves changed, and stores an immutable candidate UI Spec (`ui_spec_version`, `mutation_run`) that the frontend's real Zod schema accepts. Human approval, experiments, traffic allocation, statistical analysis, promotion, rollback, browser-based checks and deployment below are still design.
 
 ```mermaid
 graph TD
@@ -371,6 +371,7 @@ darwin-ux/
 │   │       ├── research/          # LangGraph research workflow: graph, budgets, critique, resume (Step 10)
 │   │       ├── decisions/         # decision gate: port, rules, test double, LLM baseline, Jev adapter (Step 11)
 │   │       ├── mutations/         # candidate mutations: surface, MutationSpec, apply, generators, UI Spec versions (Step 12)
+│   │       ├── sandbox/           # candidate evaluation: provenance, harness runner, candidate_eval.v1 policy (Step 13)
 │   │       ├── evaluation/        # Evaluation engine, metrics, judges
 │   │       ├── pipelines/         # Telemetry & ingestion processing logic
 │   │       ├── mutation/          # UI Spec, component registry, MutationSpec validation

@@ -133,6 +133,33 @@ Every failure — invalid output, validation failure, generator error or unavail
 
 **Still future:** sandbox rendering, accessibility / visual / performance evaluation, human approval of candidates, experiments, promotion to a generation.
 
+## Current Implementation (Step 13): Candidate Sandbox Evaluation
+
+Step 12 proved a candidate can be **safe and still harmful** (the fake LLM set a CTA back to `delayed`). Step 13 evaluates usefulness before anything could reach a future experiment — deterministically, with no LLM judge (`backend/src/darwin/sandbox/`, `frontend/src/evaluation/`).
+
+```
+CandidateUISpec → provenance re-check (reject on failure, no harness call)
+  → frontend harness: real Zod schema + registry + SpecPage in jsdom (facts only)
+  → schema | render | functional | accessibility | regression | ux_intent | performance
+  → candidate_eval.v1 policy → pass | human_review | reject → immutable CandidateEvaluationRun
+```
+
+| Category | Kind | Checks (fail → reject; warn → human_review) |
+|---|---|---|
+| schema | deterministic | the app's Zod schema accepts the candidate |
+| render | deterministic | it renders through the registry / `SpecPage` |
+| functional | deterministic | every CTA still reveals the form and emits its own `button_click`; the form errors on empty submit, completes, keeps its telemetry ids; no typed value in telemetry |
+| accessibility | deterministic | no NEW serious/critical axe violation (fail) or minor one (warn); every input labelled; no focusable button lost; heading structure unchanged (warn). Pre-existing issues are not held against the candidate |
+| regression | deterministic | ids, types, actions and structure unchanged; only mutable leaves differ; the candidate equals parent + its MutationSpec; something changed |
+| ux_intent | deterministic | **alignment with the observed problem, not UX quality**: rage_click on X → `X.feedback` delayed → immediate, confirmed by the measured reveal delay (1500 → 0 ms); error_burst → `validation` on_submit → inline (confirmed: an error shows on blur) and/or `error_display` summary → per_field (confirmed). Moving any property *to* a known friction value → fail. Unrelated / mixed / unconfirmed / unsupported → warn |
+| performance | measured | component count unchanged (fail); JSON delta ≤ 2 KiB and DOM-node delta ≤ 10% (warn). Local jsdom render time is recorded, never gated |
+
+`pass` requires every gate to pass **and** aligned UX intent; it means only "eligible for future human approval / experiment setup". Any evaluator problem (harness unavailable, crashed, malformed output, an evaluator bug) is `human_review`, never `pass`; provenance failures are `reject`. Design taste, copy quality and visual quality are **not** evaluated: they need humans (or a calibrated judge, later).
+
+A finding from the harness: `validation: inline` alone has **no visible effect** in today's renderer (with `error_display: summary`, a blur records the error but shows nothing), so an inline-only candidate is `human_review` (`ux_intent_unconfirmed`) rather than a pass — behaviour, not token names, decides.
+
+**Still future:** human approval of candidates, experiment creation, traffic allocation, statistical analysis, promotion and rollback; browser-based checks (contrast, layout, visual regression, real performance).
+
 ## Responsibility Analysis
 
 ### 1. Signal Detection (Observer)

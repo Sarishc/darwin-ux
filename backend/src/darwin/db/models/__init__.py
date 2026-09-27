@@ -3,6 +3,7 @@
 
 from darwin.db.models.behavior_signal import BehaviorSignal
 from darwin.db.models.decision import DecisionRun
+from darwin.db.models.evaluation import CandidateEvaluationRun
 from darwin.db.models.hypothesis import Hypothesis, HypothesisRun
 from darwin.db.models.knowledge import KnowledgeChunk, KnowledgeDocument, RetrievalRun
 from darwin.db.models.mutation import MutationRun, UISpecVersion
@@ -12,6 +13,7 @@ from darwin.db.models.user_event import UserEvent
 
 __all__ = [
     "BehaviorSignal",
+    "CandidateEvaluationRun",
     "DecisionRun",
     "Hypothesis",
     "HypothesisRun",

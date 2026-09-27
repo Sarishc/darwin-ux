@@ -1,6 +1,6 @@
 # DarwinUX — Development Environment
 
-> **Status (Step 12):** candidate mutations (proceed decision → provenance re-check → MutationGenerator: fixture / LLM-port baseline / unimplemented Muse seam → strict MutationSpec → in-memory apply + protected diff → immutable `ui_spec_version` candidate, Zod-checked; `mutation_run`); a decision gate after research (Decider port: `rules.v1`, a test double, an LLM-port baseline, a Jev adapter not yet called live; fail-closed policy; `decision_run`); a bounded LangGraph research workflow (retrieval → sufficiency heuristic → ≤ 1 refinement → Step 9 hypothesis → critique → accept / human review via CLI resume / reject / stop; `research_run` / `research_step`); hypothesis generation (signal → Product Memory evidence → one structured call through an LLM port → strict validation → `hypothesis_run` / `hypothesis`; deterministic `FakeLLMProvider` only); Product Memory (retrieval only: allowlisted docs → chunks → embeddings in pgvector → filtered vector search → golden-set evaluation); a Next.js demo app (`/demo`, Generation 0) rendered from a validated UI Spec, with a browser telemetry SDK; the FastAPI *producer*; a separate worker (*consumer*) connected by a durable PostgreSQL-backed queue; deterministic behaviour signals; PostgreSQL 17 (telemetry, signals, queue, Product Memory, hypotheses, research runs, decisions, UI Spec versions, mutation runs); backend and frontend tests. No Docker, no AWS, no real LLM provider, no live Jev call, no Muse interface, no sandbox or deployment yet.
+> **Status (Step 13):** candidate sandbox evaluation (real Zod schema + registry + SpecPage in a jsdom harness; seven separate categories; deterministic `candidate_eval.v1` policy; immutable `candidate_evaluation_run`); candidate mutations (proceed decision → provenance re-check → MutationGenerator: fixture / LLM-port baseline / unimplemented Muse seam → strict MutationSpec → in-memory apply + protected diff → immutable `ui_spec_version` candidate, Zod-checked; `mutation_run`); a decision gate after research (Decider port: `rules.v1`, a test double, an LLM-port baseline, a Jev adapter not yet called live; fail-closed policy; `decision_run`); a bounded LangGraph research workflow (retrieval → sufficiency heuristic → ≤ 1 refinement → Step 9 hypothesis → critique → accept / human review via CLI resume / reject / stop; `research_run` / `research_step`); hypothesis generation (signal → Product Memory evidence → one structured call through an LLM port → strict validation → `hypothesis_run` / `hypothesis`; deterministic `FakeLLMProvider` only); Product Memory (retrieval only: allowlisted docs → chunks → embeddings in pgvector → filtered vector search → golden-set evaluation); a Next.js demo app (`/demo`, Generation 0) rendered from a validated UI Spec, with a browser telemetry SDK; the FastAPI *producer*; a separate worker (*consumer*) connected by a durable PostgreSQL-backed queue; deterministic behaviour signals; PostgreSQL 17 (telemetry, signals, queue, Product Memory, hypotheses, research runs, decisions, UI Spec versions, mutation runs, candidate evaluations); backend and frontend tests. No Docker, no AWS, no real LLM provider, no live Jev call, no Muse interface, no browser-based checks, no human approval, experiments or deployment yet.
 
 ## 1. Prerequisites
 
@@ -164,6 +164,8 @@ A small root `Makefile` wraps the real commands. It only delegates to uv — uv 
 | `make ui-spec-import` / `make ui-spec-show` | `python -m darwin.mutations.specs import\|show` | Import Generation 0 as the immutable DB baseline (idempotent) / list versions |
 | `make mutation-generate [DECISION_RUN_ID=…] [GENERATOR=fixture\|llm\|muse]` | `python -m darwin.mutations.cli` | One candidate UI Spec from a proceed decision; records a `mutation_run` |
 | `make mutation-eval` | `python -m darwin.mutations.evaluation` | Golden mutation eval (28 cases), each generator separately, Zod-checked; writes `artifacts/mutation-eval.json` (git-ignored) |
+| `make candidate-eval [CANDIDATE_SPEC_ID=…] [MUTATION_RUN_ID=…]` | `python -m darwin.sandbox.cli` | Evaluate one candidate in the sandbox; prints each category; records a `candidate_evaluation_run` |
+| `make sandbox-eval` | `python -m darwin.sandbox.evaluation` | Golden sandbox eval (29 cases) through the real harness, with the fail-open count; writes `artifacts/sandbox-eval.json` (git-ignored) |
 
 Without make, run the same commands from `backend/`, e.g.:
 
@@ -235,7 +237,8 @@ nvm alias default 24
 | A real LLM provider SDK / credentials | When chosen (OPEN_QUESTIONS.md N1) | The port + FakeLLMProvider prove the control layer offline; a real provider must pass `make hypothesis-eval` |
 | LangGraph Postgres checkpointer | Not planned yet (OPEN_QUESTIONS.md N15) | Resume needs only ids and counters DarwinUX already persists |
 | LangChain agents, tools, chains, loaders | Not planned | The graph orchestrates DarwinUX services directly; no tool registry |
-| Sandbox rendering / headless browser | Step 13 | Step 12 ends at validated candidate data |
+| Headless browser (Playwright) | Later | jsdom covers behaviour, telemetry and rule-based accessibility; contrast, layout, visual regression and real timing need a browser |
+| LLM-as-judge for design / copy / taste | Later | Needs calibration against human labels; deterministic gates come first |
 | TypeSafe (Jev) SDK | Not planned for the gate | Its automatic retries would hide extra calls behind one audited decision; the adapter makes one plain HTTP call |
 | LLM-as-judge | Later | Judges need a real provider and agreement checks |
 | Dockerfile for the app | Later step | Running on the host is faster to iterate on |
@@ -277,6 +280,13 @@ backend/src/darwin/
 ├── llm/
 │   ├── port.py        # LLMProvider protocol, request/result/usage, error types
 │   └── fake.py        # FakeLLMProvider: deterministic, one mode per failure
+├── sandbox/           # candidate sandbox evaluation (Step 13)
+│   ├── harness.py     # runs the frontend harness (temp files, argv); strict output schema
+│   ├── provenance.py  # candidate / parent / mutation run / decision re-check
+│   ├── policy.py      # seven categories + candidate_eval.v1 aggregation
+│   ├── service.py     # evaluate_candidate() -> immutable CandidateEvaluationRun
+│   ├── cli.py         # make candidate-eval
+│   └── evaluation.py  # golden sandbox set (make sandbox-eval)
 ├── mutations/         # candidate mutations (Step 12)
 │   ├── surface.py     # the mutation surface: mutable properties per node type
 │   ├── specs.py       # UI Spec versions: Generation 0 import, current baseline
@@ -855,6 +865,21 @@ cd frontend && npm run --silent validate-spec -- path/to/spec.json   # the app's
 ```
 
 The CLI prints the change, source/candidate hashes and the frontend Zod verdict. Nothing is written to `frontend/src/ui-spec/`; a future promotion step decides how a candidate becomes a generation file.
+
+---
+
+## 21. Candidate Sandbox Evaluation (Step 13)
+
+Evaluate a candidate UI Spec before any human or experiment sees it. Categories, policy and limits: AGENT_ARCHITECTURE.md, "Current Implementation (Step 13)".
+
+```bash
+make candidate-eval                                   # the latest candidate
+make candidate-eval CANDIDATE_SPEC_ID=<uuid>          # a specific candidate
+make candidate-eval CANDIDATE_SPEC_ID=<uuid> MUTATION_RUN_ID=<uuid>
+make sandbox-eval                                     # 29 golden cases, real harness, rolled back
+```
+
+The harness itself (`frontend/src/evaluation/`) runs under Vitest: `npm run sandbox-harness` with `SANDBOX_INPUT` / `SANDBOX_OUTPUT` pointing at temp JSON files (the backend does this for you, with an argument array — never a shell string). Its unit tests run with the normal `npm test`. Dependencies: `axe-core` (already in the tree via eslint's jsx-a11y; now declared directly, dev only). No Playwright, no browser download: jsdom cannot measure colour contrast, layout or real timing, and those checks are deliberately deferred.
 
 ---
 
