@@ -100,7 +100,10 @@ Built: bounded LangGraph research graph (`research_graph.v1`): deterministic que
 **Learn:** LangGraph state, conditional edges, interrupts/checkpoints, tool calling, the one real agent, agent evaluation.
 **Exit:** a detected signal produces a full, traceable AgentRun ending in an approval request; golden trajectories pass.
 
-### Step 6 — Mutation Surface, Sandbox, Evaluation Engine
+### Step 6 — Mutation Surface, Sandbox, Evaluation Engine — mutation surface ✅ (built as "Step 12")
+
+Built: explicit mutation surface, strict MutationSpec (replace-only, semantic targets), pure apply + independent protected-field diff, immutable content-addressed UI Spec versions (migration 0008), provenance re-check, fixture + LLM-port generators, an unimplemented Muse seam, a frontend Zod contract (`npm run validate-spec`), 28-case per-generator evaluation (unsafe candidates: 0). Not yet: sandbox rendering, accessibility checks, the evaluation orchestrator, risk tiers.
+
 
 - MutationSpec schema, registry-based allowlist and bounds validation, UI Spec versioning.
 - Sandbox render via headless browser with automated accessibility checks; artefacts in object storage.

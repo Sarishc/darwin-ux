@@ -75,6 +75,8 @@ class Artifact(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    signal_type: Literal["rage_click", "error_burst"] = "rage_click"
+    affected_component: str | None = "plan_team_pro_cta"
     research_status: ResearchStatus = "succeeded"
     stop_reason: str | None = None  # default derived from the status
     human_decision: Literal["approve", "reject"] | None = None
@@ -150,21 +152,32 @@ def write_artifact(session: Session, key: str, art: Artifact) -> uuid.UUID:
         return uuid.uuid5(NAMESPACE, f"{key}:{part}")
 
     signal_id = uid("signal")
+    evidence: dict[str, Any] = (
+        {
+            "component": "plan_team_pro_cta",
+            "count": 4,
+            "threshold": 4,
+            "window_seconds": 2.0,
+            "event_ids": [],
+        }
+        if art.signal_type == "rage_click"
+        else {
+            "count": 3,
+            "threshold": 3,
+            "window_seconds": 10.0,
+            "event_types": ["form_error"],
+            "event_ids": [],
+        }
+    )
     session.add(
         BehaviorSignal(
             signal_id=signal_id,
-            signal_type="rage_click",
+            signal_type=art.signal_type,
             detector_version="1",
             session_id=uid("session"),
             window_start=T0,
             window_end=T0 + timedelta(seconds=1.5),
-            evidence={
-                "component": "plan_team_pro_cta",
-                "count": 4,
-                "threshold": 4,
-                "window_seconds": 2.0,
-                "event_ids": [],
-            },
+            evidence=evidence,
             superseded_at=T0 if art.signal_superseded else None,
         )
     )
@@ -191,7 +204,7 @@ def write_artifact(session: Session, key: str, art: Artifact) -> uuid.UUID:
             HypothesisRun(
                 id=hypothesis_run_id,
                 signal_id=hypothesis_signal,
-                signal_type="rage_click",
+                signal_type=art.signal_type,
                 request_version="hypothesis.v1",
                 provider="fake",
                 model="fake-hypothesis:v1",
@@ -211,7 +224,7 @@ def write_artifact(session: Session, key: str, art: Artifact) -> uuid.UUID:
                 signal_id=hypothesis_signal,
                 statement=art.statement,
                 rationale="Templated rationale (decision eval fixture).",
-                affected_component="plan_team_pro_cta",
+                affected_component=art.affected_component,
                 confidence=art.hypothesis_confidence,
                 evidence_references=[
                     {

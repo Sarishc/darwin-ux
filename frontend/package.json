@@ -8,7 +8,8 @@
     "start": "next start --port 3000",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "validate-spec": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-spec.mts"
   },
   "dependencies": {
     "next": "16.3.6",

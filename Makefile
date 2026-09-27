@@ -15,7 +15,8 @@ PG_LOG = $(shell brew --prefix)/var/log/$(PG_FORMULA).log
 	db-start db-stop db-status db-logs db-setup \
 	migrate migration-status migrate-sql queue-status test-integration \
 	memory-ingest memory-query memory-eval hypothesis-generate hypothesis-eval \
-	research-run research-resume research-eval decision-run decision-eval
+	research-run research-resume research-eval decision-run decision-eval \
+	ui-spec-import ui-spec-show mutation-generate mutation-eval
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-17s %s\n", $$1, $$2}'
@@ -131,6 +132,23 @@ decision-run: ## Decide RUN_ID=<research run> (default: latest finished) [DECIDE
 
 decision-eval: ## Golden decision eval, each decider reported separately (rolled back)
 	$(BACKEND) uv run $(ENV_FILE) python -m darwin.decisions.evaluation
+
+# ---- Candidate mutations (Step 12): data-only MutationSpecs; nothing is deployed --------
+
+ui-spec-import: ## Import Generation 0 (frontend/src/ui-spec/generation-0.json) as the DB baseline (idempotent)
+	$(BACKEND) uv run $(ENV_FILE) python -m darwin.mutations.specs import
+
+ui-spec-show: ## List stored UI Spec versions (read-only)
+	$(BACKEND) uv run $(ENV_FILE) python -m darwin.mutations.specs show
+
+mutation-generate: ## Candidate from DECISION_RUN_ID=<uuid> (default: latest proceed) [GENERATOR=fixture|llm|muse]
+	$(BACKEND) uv run $(ENV_FILE) python -m darwin.mutations.cli \
+		$(if $(DECISION_RUN_ID),--decision-run-id $(DECISION_RUN_ID)) \
+		$(if $(GENERATOR),--generator $(GENERATOR)) $(if $(FIXTURE_MODE),--fixture-mode $(FIXTURE_MODE)) \
+		$(if $(SHOW_REQUEST),--show-request)
+
+mutation-eval: ## Golden mutation eval, each generator separately + frontend Zod check (rolled back)
+	$(BACKEND) uv run $(ENV_FILE) python -m darwin.mutations.evaluation
 
 test-integration: ## Integration tests against local darwin_test (needs PostgreSQL 17)
 	$(BACKEND) uv run $(ENV_FILE) pytest -m integration

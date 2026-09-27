@@ -29,6 +29,8 @@ Unknown — to be verified with TypeSafe AI documentation or contacts:
 
 Known: Muse is the name for DarwinUX's generative mutation component, which must be first-class and must never deploy.
 
+**Step 12 check (2026-09-27):** no Muse package is installed, and TypeSafe AI's official documentation (docs.typesafe.ai: models, API reference, introduction, primitives) describes only Jev — a System One *decision* model returning typed answers — and never mentions Muse. No authoritative Muse interface was found, so none was implemented; `MuseAdapter` is an explicit, refusing seam. All questions below remain open.
+
 Unknown:
 
 1. **Who provides Muse?** Is it a TypeSafe AI model, another vendor's model, or a component DarwinUX is expected to build? (The earlier draft stated it was from TypeSafe AI; that was not verified and has been removed.)

@@ -5,6 +5,7 @@ from darwin.db.models.behavior_signal import BehaviorSignal
 from darwin.db.models.decision import DecisionRun
 from darwin.db.models.hypothesis import Hypothesis, HypothesisRun
 from darwin.db.models.knowledge import KnowledgeChunk, KnowledgeDocument, RetrievalRun
+from darwin.db.models.mutation import MutationRun, UISpecVersion
 from darwin.db.models.queue_message import QueueMessage
 from darwin.db.models.research import ResearchRun, ResearchStep
 from darwin.db.models.user_event import UserEvent
@@ -16,9 +17,11 @@ __all__ = [
     "HypothesisRun",
     "KnowledgeChunk",
     "KnowledgeDocument",
+    "MutationRun",
     "QueueMessage",
     "ResearchRun",
     "ResearchStep",
     "RetrievalRun",
+    "UISpecVersion",
     "UserEvent",
 ]

@@ -12,9 +12,11 @@ It is not a chatbot wrapper. It is a closed-loop system where software evolves t
 
 ## Status
 
-**Step 11 — Jev Decision Layer + Decision Evaluation** (Steps 0–10 complete)
+**Step 12 — Mutation Generation + Safe MutationSpec** (Steps 0–11 complete)
 
-After a finished research run, one bounded decision — `proceed` (eligible for a *future* mutation stage, nothing more), `human_review` or `reject` — through a DarwinUX-owned Decider port: a deterministic `rules.v1` baseline, a test double, an LLM-port baseline, and a Jev adapter written against TypeSafe AI's public HTTP docs but never called live (no API key). A fail-closed policy outside every model turns any decider failure or invalid output into `human_review` and downgrades `proceed` when hard preconditions fail; `decision_run` rows and database CHECKs record it. A 27-case evaluation scores each decider separately, with a fail-open count. No Muse, no mutations, no experiments.
+A `proceed` decision can now produce a **candidate** UI Spec — data only. DarwinUX re-checks the decision's provenance (a stale decision is refused before any generator runs), sends a bounded MutationRequest to a MutationGenerator (a deterministic fixture and an LLM-port baseline; Muse is an explicit unimplemented seam — no documented interface), and accepts only a strict MutationSpec: `replace` on semantic `{component_id, property}` targets from an explicit allowlist, with closed-enum or bounded plain-text values. The change is applied in memory, an independent diff proves nothing protected moved, and the candidate is stored as an immutable, content-addressed `ui_spec_version` that the frontend's real Zod schema accepts. Nothing is written to the repository, rendered or deployed. A 28-case evaluation per generator reports zero unsafe candidates.
+
+Step 11 — After a finished research run, one bounded decision — `proceed` (eligible for a *future* mutation stage, nothing more), `human_review` or `reject` — through a DarwinUX-owned Decider port: a deterministic `rules.v1` baseline, a test double, an LLM-port baseline, and a Jev adapter written against TypeSafe AI's public HTTP docs but never called live (no API key). A fail-closed policy outside every model turns any decider failure or invalid output into `human_review` and downgrades `proceed` when hard preconditions fail; `decision_run` rows and database CHECKs record it. A 27-case evaluation scores each decider separately, with a fail-open count. No Muse, no mutations, no experiments.
 
 Step 10 — A bounded LangGraph graph (`research_graph.v1`) orchestrates the existing services for one signal: deterministic Product Memory retrieval with a sufficiency heuristic and at most one refinement, the Step 9 grounded hypothesis, one strict critique call, then accept, pause for human review (resumed from the CLI with an allowlisted decision), reject, or stop. Hard budgets (2 retrievals, 2 LLM calls, 12 steps) are enforced in code and by database CHECKs; every run and step is persisted (`research_run`, `research_step`). A 19-case golden set checks outcomes **and** trajectories. Still only a deterministic `FakeLLMProvider` — no Jev, no Muse, no mutations, no experiments.
 
@@ -34,6 +36,7 @@ make memory-ingest && make memory-eval   # Product Memory: ingest corpus, evalua
 make hypothesis-generate && make hypothesis-eval   # hypothesis for the latest signal; golden eval
 make research-run && make research-eval            # research workflow for the latest signal; golden eval
 make decision-run && make decision-eval            # decide the latest finished research run; per-decider eval
+make ui-spec-import && make mutation-generate && make mutation-eval   # candidate UI Spec from the latest proceed
 make check  # format check, lint, type check, unit tests
 make db-start && make db-setup && make migrate   # local PostgreSQL 17
 make test-integration

@@ -387,6 +387,23 @@ Read these honestly: the golden labels encode DarwinUX's own decision policy, an
 
 As with Jev, every metric is computed for Muse **and** for the LLM baseline generator, so Muse's contribution is measured rather than asserted.
 
+**Implemented (Step 12), the control-layer harness:** `make mutation-eval` runs 28 golden cases (`backend/tests/evals/golden/mutations.json`) per generator, each in a rolled-back transaction: import Generation 0, write a research artifact, make a real `rules.v1` proceed decision, optionally make provenance stale, run one generation. Cases state expected status, error type and exact changes. Every candidate is then re-checked **independently** (its diff may only touch mutable properties) and by the frontend's real Zod schema. Reported per generator (`artifacts/mutation-eval.json`, `darwinux.mutation-eval.v1`):
+
+| Metric | `fixture_mutation.v1` | `llm_mutation.v1` (FakeLLMProvider) |
+|---|---|---|
+| Cases meeting expectations | 28/28 | 28/28 |
+| Valid MutationSpec rate (of outputs) | 17/20 | 22/23 |
+| Safety-validation pass rate (of valid specs) | 6/17 | 20/22 |
+| Correct-target / expected-change rate (of the 6 desired changes) | 6/6 / 6/6 | 2/6 / 2/6 |
+| Protected-field violations | 0 | 0 |
+| Stale-provenance refusal (no generator call) | 4/4 | 4/4 |
+| Generator-failure containment | 4/4 | 1/1 |
+| Candidate creation | 6/28 | 20/28 |
+| Frontend Zod acceptance of candidates | 6/6 | 20/20 |
+| **Unsafe candidate creation count** | **0** | **0** |
+
+These measure containment, not usefulness: the fake LLM's fixed "flip the first enum" behaviour creates 20 *valid* candidates, one of which (`no_applicable_mutation`) re-introduces friction (`feedback: immediate → delayed`). It is safe and schema-valid — and harmful. Usefulness is for sandbox evaluation, humans and experiments (future steps); Muse: not evaluated (no interface).
+
 ---
 
 ## Evaluating the Evaluators (Meta-Evaluation)

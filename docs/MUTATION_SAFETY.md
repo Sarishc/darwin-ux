@@ -58,7 +58,50 @@ The mutation surface above now has a concrete base:
 - **Component registry** (`frontend/src/components/registry.tsx`): an exhaustive, typed map from the six spec types (`heading`, `text`, `notice`, `button`, `plan_grid`, `signup_form`) to React renderers. Anything else — including prototype names like `constructor` — throws `UnknownComponentError`. Text is rendered as React text nodes, so markup in a string renders as literal text.
 - **Generation 0** (`frontend/src/ui-spec/generation-0.json`): committed, validated at build time, and guarded by a SHA-256 test so it is never edited in place. Later generations are new files.
 
-A future MutationSpec patches values in such a document (e.g. `feedback: delayed → immediate`); the result must re-validate against the same schema before it can render. The frontend schema is the rendering-side guard; the server-side MutationSpec validator will be added with mutations.
+A MutationSpec patches values in such a document (e.g. `feedback: delayed → immediate`); the result must re-validate against the same schema before it can render. The frontend schema is the rendering-side guard; the server-side MutationSpec validator was added in Step 12 (below).
+
+### What exists today (Step 12): candidate mutations
+
+A proceed decision can now produce a **candidate** UI Spec — data only, in the database, never rendered, deployed or written to the repository.
+
+```
+DecisionRun(proceed) → provenance re-check → MutationRequest (mutation_request.v1)
+  → MutationGenerator (fixture | llm | muse), one call
+  → MutationSpec v1 → surface validation → pure in-memory apply → protected-field diff
+  → CandidateUISpec (immutable, content-addressed) + MutationRun
+```
+
+**Operation vocabulary: `replace`, nothing else.** A target is *semantic* — `{component_id, property}` — never a JSON Pointer, so there is no path that can point anywhere else. 1–5 operations; no duplicate targets; values are `string | boolean` only (no objects, numbers or arrays).
+
+**Mutable properties** (`backend/src/darwin/mutations/surface.py`; everything else is protected):
+
+| Node | Property | Allowed |
+|---|---|---|
+| button (incl. plan CTAs) | `feedback` | `immediate`, `delayed` |
+| | `variant` | `primary`, `secondary` |
+| | `label` | plain text ≤ 40 |
+| plan_card | `highlighted` | boolean |
+| plan_grid | `gap` | `sm`, `md`, `lg` |
+| signup_form | `validation` | `on_submit`, `inline` |
+| | `error_display` | `summary`, `per_field` |
+| | `title` / `submit_label` / `summary_error_text` | plain text ≤ 80 / 40 / 160 |
+| section | `spacing` | `sm`, `md`, `lg` |
+| heading / text / notice | `text` | plain text ≤ 120 / 400 / 200 |
+| text | `emphasis` | `normal`, `strong` |
+| notice | `tone` | `info`, `warning` |
+
+**Protected:** schema `version`, `generation` (assigned by DarwinUX: the candidate is stamped parent + 1), page id and title, every `id`, every `type`, every `action`, heading `level`, section `visibility`, component order and count, plan `name` / `price_label` / `features`, form `fields`, `completion_text`. "Plain text" is trimmed, single-line, bounded, and rejects code fences, HTML tags and control characters.
+
+**Validation, in order** (any failure → no candidate): parse → strict MutationSpec → source spec matches → no duplicate target → component exists → property mutable for its type → value allowed → value actually changes → pure apply (deep copy; the source is never touched) → **generic diff**: the leaves that differ between source and candidate must be exactly the targeted properties plus `generation` (this is independent of the applier, so an applier bug cannot slip a change through) → shape and size bounds.
+
+**Provenance is re-checked, not trusted.** Before any generator call: the decision is still proceed; Step 11's DecisionRequest can still be built (research eligible, hypothesis accepted and still this run's, signal canonical, critique valid) *and hashes exactly as it did when the decision was made*; the source spec is the page's **current baseline** (a newer baseline or a candidate is refused). Stale provenance is recorded (`stale_provenance`) with no request and no generator call.
+
+**Cross-language contract.** The frontend's real Zod schema stays the single definition of a valid UI Spec. `npm run validate-spec -- <file>` validates JSON with it; `--json-schema` exports it. A contract test compares every mutable enum and length bound above with that export, and every candidate in the tests, the evaluation and the CLI is validated by it. The request path itself does not depend on Node.
+
+**Versions.** `ui_spec_version` rows are immutable (a database trigger rejects every UPDATE). Generation 0 is imported from the committed JSON by `make ui-spec-import` (idempotent; a conflicting Generation 0 is refused; the file is only read). A candidate has `generation = NULL` and `candidate_for_generation = parent + 1` until a future promotion step; identical candidates are deduplicated by (parent, content hash).
+
+**Muse.** No documented Muse interface exists (see OPEN_QUESTIONS.md B2), so `MuseAdapter` is an explicit seam that refuses to run. The fixture and the LLM-port baseline exercise the whole control layer.
+
 
 ### Mutation Types (v1)
 

@@ -1,6 +1,6 @@
 # DarwinUX — Development Environment
 
-> **Status (Step 11):** a decision gate after research (Decider port: `rules.v1`, a test double, an LLM-port baseline, a Jev adapter not yet called live; fail-closed policy; `decision_run`); a bounded LangGraph research workflow (retrieval → sufficiency heuristic → ≤ 1 refinement → Step 9 hypothesis → critique → accept / human review via CLI resume / reject / stop; `research_run` / `research_step`); hypothesis generation (signal → Product Memory evidence → one structured call through an LLM port → strict validation → `hypothesis_run` / `hypothesis`; deterministic `FakeLLMProvider` only); Product Memory (retrieval only: allowlisted docs → chunks → embeddings in pgvector → filtered vector search → golden-set evaluation); a Next.js demo app (`/demo`, Generation 0) rendered from a validated UI Spec, with a browser telemetry SDK; the FastAPI *producer*; a separate worker (*consumer*) connected by a durable PostgreSQL-backed queue; deterministic behaviour signals; PostgreSQL 17 (telemetry, signals, queue, Product Memory, hypotheses, research runs, decisions); backend and frontend tests. No Docker, no AWS, no real LLM provider, no live Jev call, no Muse yet.
+> **Status (Step 12):** candidate mutations (proceed decision → provenance re-check → MutationGenerator: fixture / LLM-port baseline / unimplemented Muse seam → strict MutationSpec → in-memory apply + protected diff → immutable `ui_spec_version` candidate, Zod-checked; `mutation_run`); a decision gate after research (Decider port: `rules.v1`, a test double, an LLM-port baseline, a Jev adapter not yet called live; fail-closed policy; `decision_run`); a bounded LangGraph research workflow (retrieval → sufficiency heuristic → ≤ 1 refinement → Step 9 hypothesis → critique → accept / human review via CLI resume / reject / stop; `research_run` / `research_step`); hypothesis generation (signal → Product Memory evidence → one structured call through an LLM port → strict validation → `hypothesis_run` / `hypothesis`; deterministic `FakeLLMProvider` only); Product Memory (retrieval only: allowlisted docs → chunks → embeddings in pgvector → filtered vector search → golden-set evaluation); a Next.js demo app (`/demo`, Generation 0) rendered from a validated UI Spec, with a browser telemetry SDK; the FastAPI *producer*; a separate worker (*consumer*) connected by a durable PostgreSQL-backed queue; deterministic behaviour signals; PostgreSQL 17 (telemetry, signals, queue, Product Memory, hypotheses, research runs, decisions, UI Spec versions, mutation runs); backend and frontend tests. No Docker, no AWS, no real LLM provider, no live Jev call, no Muse interface, no sandbox or deployment yet.
 
 ## 1. Prerequisites
 
@@ -161,6 +161,9 @@ A small root `Makefile` wraps the real commands. It only delegates to uv — uv 
 | `make research-eval` | `python -m darwin.research.evaluation` | Golden research eval: outcomes + trajectories (19 cases, rolled back); writes `artifacts/research-eval.json` (git-ignored) |
 | `make decision-run [RUN_ID=…] [DECIDER=rules\|fake\|llm\|jev]` | `python -m darwin.decisions.cli` | One decision about a finished research run; records a `decision_run` |
 | `make decision-eval` | `python -m darwin.decisions.evaluation` | Golden decision eval (27 cases), each decider separately, with fail-open counts; writes `artifacts/decision-eval.json` (git-ignored) |
+| `make ui-spec-import` / `make ui-spec-show` | `python -m darwin.mutations.specs import\|show` | Import Generation 0 as the immutable DB baseline (idempotent) / list versions |
+| `make mutation-generate [DECISION_RUN_ID=…] [GENERATOR=fixture\|llm\|muse]` | `python -m darwin.mutations.cli` | One candidate UI Spec from a proceed decision; records a `mutation_run` |
+| `make mutation-eval` | `python -m darwin.mutations.evaluation` | Golden mutation eval (28 cases), each generator separately, Zod-checked; writes `artifacts/mutation-eval.json` (git-ignored) |
 
 Without make, run the same commands from `backend/`, e.g.:
 
@@ -232,6 +235,7 @@ nvm alias default 24
 | A real LLM provider SDK / credentials | When chosen (OPEN_QUESTIONS.md N1) | The port + FakeLLMProvider prove the control layer offline; a real provider must pass `make hypothesis-eval` |
 | LangGraph Postgres checkpointer | Not planned yet (OPEN_QUESTIONS.md N15) | Resume needs only ids and counters DarwinUX already persists |
 | LangChain agents, tools, chains, loaders | Not planned | The graph orchestrates DarwinUX services directly; no tool registry |
+| Sandbox rendering / headless browser | Step 13 | Step 12 ends at validated candidate data |
 | TypeSafe (Jev) SDK | Not planned for the gate | Its automatic retries would hide extra calls behind one audited decision; the adapter makes one plain HTTP call |
 | LLM-as-judge | Later | Judges need a real provider and agreement checks |
 | Dockerfile for the app | Later step | Running on the host is faster to iterate on |
@@ -273,6 +277,20 @@ backend/src/darwin/
 ├── llm/
 │   ├── port.py        # LLMProvider protocol, request/result/usage, error types
 │   └── fake.py        # FakeLLMProvider: deterministic, one mode per failure
+├── mutations/         # candidate mutations (Step 12)
+│   ├── surface.py     # the mutation surface: mutable properties per node type
+│   ├── specs.py       # UI Spec versions: Generation 0 import, current baseline
+│   ├── request.py     # provenance re-check + MutationRequest (mutation_request.v1)
+│   ├── spec.py        # strict MutationSpec + every validation layer
+│   ├── apply.py       # pure in-memory apply + generic protected-field diff
+│   ├── port.py        # MutationGenerator protocol + errors
+│   ├── fixture.py     # FixtureMutationGenerator (fixture_mutation.v1)
+│   ├── llm.py         # LLMMutationGenerator (llm_mutation.v1, mutation.v1 request)
+│   ├── muse.py        # MuseAdapter: explicit, refusing seam (no documented interface)
+│   ├── frontend.py    # candidate check with the frontend's real Zod schema
+│   ├── service.py     # generate_candidate()
+│   ├── cli.py         # make mutation-generate
+│   └── evaluation.py  # per-generator golden eval (make mutation-eval)
 ├── decisions/         # decision gate after research (Step 11)
 │   ├── vocabulary.py  # decisions, reason codes, confidence, DecisionOutput
 │   ├── request.py     # DecisionRequest (decision_request.v1) + eligibility checks
@@ -814,6 +832,29 @@ make decision-eval                                  # every decider, separately;
 ```
 
 `DARWIN_JEV_API_KEY` (TypeSafe API key, Bearer auth) and `DARWIN_JEV_MODEL` (default `jev-latest`) are optional; with no key, `DECIDER=jev` stops before anything is called and nothing is recorded. `cd backend && uv run --env-file ../.env python -m darwin.decisions.evaluation --include-jev` adds Jev to the evaluation once a key exists (it sends the 20 eligible golden requests to TypeSafe).
+
+---
+
+## 20. Candidate Mutations (Step 12)
+
+From a proceed decision to an immutable candidate UI Spec in the database — data only. Design and the mutation surface: MUTATION_SAFETY.md, "What exists today (Step 12)".
+
+```bash
+make ui-spec-import                                  # once: Generation 0 -> DB baseline (idempotent)
+make ui-spec-show                                    # list baseline + candidates (read-only)
+make mutation-generate                               # latest proceed decision, fixture generator
+make mutation-generate DECISION_RUN_ID=<uuid> GENERATOR=fixture
+make mutation-generate GENERATOR=llm                 # LLM-port baseline (FakeLLMProvider)
+make mutation-generate FIXTURE_MODE=change_action    # an unsafe fixture: no candidate
+make mutation-generate GENERATOR=muse                # fails clearly: no documented Muse interface
+make mutation-eval                                   # every generator separately; Zod-checks candidates
+```
+
+```bash
+cd frontend && npm run --silent validate-spec -- path/to/spec.json   # the app's real Zod schema
+```
+
+The CLI prints the change, source/candidate hashes and the frontend Zod verdict. Nothing is written to `frontend/src/ui-spec/`; a future promotion step decides how a candidate becomes a generation file.
 
 ---
 

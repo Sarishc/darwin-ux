@@ -172,6 +172,13 @@ A record of a retrieval operation against Product Memory.
 
 ---
 
+### UI Spec versions and mutation runs — implemented (Step 12)
+
+As built in migration 0008 (the UISpecVersion / Mutation design further below; this is the first concrete form):
+
+- **ui_spec_version** — an immutable UI Spec document (a BEFORE UPDATE trigger rejects every update). `id`, `page_id`, `status` (CHECK `baseline | candidate`), `generation` (baselines only; UNIQUE per page), `candidate_for_generation` (candidates only: parent + 1), `parent_id` (self-FK; required for candidates), `schema_version`, `spec` (the JSON), `content_hash` (sha256 of canonical JSON; UNIQUE with parent — identical candidates are one row), `source` (`repo:frontend/src/ui-spec/generation-0.json` or `mutation_run`), `created_at`. A candidate is *not* a generation: promotion is a future step.
+- **mutation_run** — one explicit generation attempt from one proceed decision. `id`, `decision_run_id` (FK), `source_spec_id` (FK), `candidate_spec_id` (FK; set **iff** succeeded), `generator` (CHECK `fixture | llm | muse`), `generator_version`, `request_version` (`mutation_request.v1`), `request_hash` (NULL **iff** stale_provenance — refused before a request exists), `status` (CHECK: `succeeded`, `invalid_output`, `validation_failed`, `generator_error`, `generator_unavailable`, `stale_provenance`), `error_type` (NULL iff succeeded), `validation_errors` (`[{loc, type}]`), `mutation_spec` (the schema-valid spec, kept as inert audit data even when later checks failed), `operation_count` (1–5), token counts, `latency_ms`, `created_at`. Index on `decision_run_id`.
+
 ### Decision runs — implemented (Step 11)
 
 As built in migration 0007 (the Jev Decision design further below; this is its first concrete form):

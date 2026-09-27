@@ -121,6 +121,18 @@ ResearchRun (succeeded | rejected) + Hypothesis + Critique + canonical Signal
 
 **The Jev value criterion.** Jev earns a production role only if, on a representative, *independently labelled* set of research artifacts (not the rules-derived golden set), it improves meaningful metrics over `rules.v1` — e.g. reject/human_review recall without losing proceed precision — **with a fail-open count no higher than the baseline's**, reported per decider, never averaged. No threshold is set until real data exists; `make decision-eval --include-jev` produces the side-by-side once a key is available.
 
+## Current Implementation (Step 12): Candidate Mutations
+
+A proceed decision (Step 11) can produce one **candidate** UI Spec through a DarwinUX-owned `MutationGenerator` port (`backend/src/darwin/mutations/`). The generator receives a bounded `MutationRequest` (mutation_request.v1): the decision summary, the hypothesis statement / component / confidence / limitations and critique findings (untrusted model output), the source spec's id / generation / hash, and — for each mutable node in the affected section — its id, type, current values and allowed values. Never the full spec, Product Memory text, telemetry, ids of sessions or events, prompts or paths. It returns an unvalidated MutationSpec; DarwinUX validates, applies in memory and stores the candidate (see MUTATION_SAFETY.md, "What exists today (Step 12)").
+
+- `fixture_mutation.v1` — deterministic: rage click on a delayed button → `feedback: immediate`; error burst → `validation: inline` + `error_display: per_field`; plus one mode per unsafe output (unknown component, protected property, invalid token, duplicate target, too many ops, action/type change, executable field, markup, raw JSON Pointer, malformed, wrong source, no-op, echoing an injection) and failures. **Not Muse.**
+- `llm_mutation.v1` — a comparator on the existing LLM port (`mutation.v1` request, untrusted-evidence delimiters, same validation). FakeLLMProvider only.
+- `MuseAdapter` — an explicit seam. TypeSafe's official docs describe only Jev (a decision model); no Muse interface is documented, so nothing is invented and `GENERATOR=muse` fails clearly.
+
+Every failure — invalid output, validation failure, generator error or unavailability, stale provenance — is an audited `mutation_run` without a candidate. **Muse value criterion:** Muse earns a production mutation role only if, on a representative set, it produces more *useful* candidates than these baselines (judged later by sandbox evaluation, humans and experiments) while keeping zero protected-field violations, zero unsafe candidates, an acceptable invalid-output rate and acceptable cost/latency. No thresholds until real data exists.
+
+**Still future:** sandbox rendering, accessibility / visual / performance evaluation, human approval of candidates, experiments, promotion to a generation.
+
 ## Responsibility Analysis
 
 ### 1. Signal Detection (Observer)
@@ -271,6 +283,8 @@ LangGraph node: critique_hypothesis
 ---
 
 ### 5. Mutation Generation (Muse)
+
+> **Step 12:** the port, a fixture, an LLM-port baseline and an explicit, unimplemented Muse seam exist (no documented Muse interface). See "Current Implementation (Step 12)".
 
 **Proposed name:** ~~Mutation Agent~~ → **Muse** (generative mutation layer)
 

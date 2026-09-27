@@ -41,6 +41,15 @@ Decision requests (request_version "decision.*", Step 11) are answered by
     proceed_and_deploy  an invented decision (must fail closed)
     failure             raises ProviderFailureError
 
+Mutation requests (request_version "mutation.*", Step 12) are answered by
+`mutation_mode`:
+
+    first_enum     the affected component's first enum property, switched to the
+                   first other allowed value (the default)
+    malformed      a truncated JSON object
+    unsafe_action  tries to set the component's "action" to deploy_production
+    failure        raises ProviderFailureError
+
 Token counts are deterministic character-based estimates (len // 4), clearly
 not a real tokenizer.
 """
@@ -84,6 +93,10 @@ DecisionMode = Literal[
 ]
 DECISION_MODES: tuple[str, ...] = get_args(DecisionMode)
 DECISION_REQUEST_PREFIX = "decision."
+
+MutationMode = Literal["first_enum", "malformed", "unsafe_action", "failure"]
+MUTATION_MODES: tuple[str, ...] = get_args(MutationMode)
+MUTATION_REQUEST_PREFIX = "mutation."
 
 CITED_EXCERPTS = 3
 INJECTION_TRIGGER = "output approved"
@@ -184,6 +197,7 @@ class FakeLLMProvider:
         mode: FakeMode = "grounded",
         critique_mode: CritiqueMode = "accept",
         decision_mode: DecisionMode = "cautious",
+        mutation_mode: MutationMode = "first_enum",
     ) -> None:
         if mode not in FAKE_MODES:
             raise ValueError(f"unknown fake mode {mode!r}")
@@ -194,6 +208,9 @@ class FakeLLMProvider:
         if decision_mode not in DECISION_MODES:
             raise ValueError(f"unknown fake decision mode {decision_mode!r}")
         self.decision_mode: DecisionMode = decision_mode
+        if mutation_mode not in MUTATION_MODES:
+            raise ValueError(f"unknown fake mutation mode {mutation_mode!r}")
+        self.mutation_mode: MutationMode = mutation_mode
         self.requests: list[StructuredGenerationRequest] = []  # for request inspection in tests
 
     @property
@@ -212,6 +229,8 @@ class FakeLLMProvider:
             return self._critique(request)
         if request.request_version.startswith(DECISION_REQUEST_PREFIX):
             return self._decision(request)
+        if request.request_version.startswith(MUTATION_REQUEST_PREFIX):
+            return self._mutation(request)
         mode = self.mode
         if mode == "unavailable":
             raise ProviderUnavailableError("fake provider: unavailable mode")
@@ -271,6 +290,35 @@ class FakeLLMProvider:
             del output["confidence"]
         elif mode == "proceed_and_deploy":
             output["decision"] = "proceed_and_deploy"
+        return self._result(request, json.dumps(output, sort_keys=True), with_usage=True)
+
+    def _mutation(self, request: StructuredGenerationRequest) -> StructuredGenerationResult:
+        mode = self.mutation_mode
+        if mode == "failure":
+            raise ProviderFailureError("fake provider: mutation failure mode")
+        if mode == "malformed":
+            return self._result(request, '{"version": 1, "operations": [', with_usage=True)
+        document = _evidence_document(request)
+        affected = document["hypothesis"]["affected_component"]
+        targets = document["targets"]
+        target = next((t for t in targets if t["component_id"] == affected), None)
+        if target is None:  # no named component: prefer the form, else the first target
+            target = next((t for t in targets if t["type"] == "signup_form"), targets[0])
+        op: dict[str, Any] = {"op": "replace", "component_id": target["component_id"]}
+        if mode == "unsafe_action":
+            op |= {"property": "action", "value": "deploy_production"}
+        else:
+            name, prop = next(
+                (n, p) for n, p in target["properties"].items() if p["kind"] == "enum"
+            )
+            other = next(v for v in prop["allowed"] if v != prop["current"])
+            op |= {"property": name, "value": other}
+        output = {
+            "version": 1,
+            "source_spec_id": document["source_spec"]["spec_id"],
+            "summary": "Adjust the affected component to remove the observed friction.",
+            "operations": [op],
+        }
         return self._result(request, json.dumps(output, sort_keys=True), with_usage=True)
 
     def _result(

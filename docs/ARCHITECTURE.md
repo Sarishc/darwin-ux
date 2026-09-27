@@ -185,7 +185,7 @@ A fourth, automatic decision exists: **rollback on guardrail breach** (error rat
 
 ## AI / Agent Decision Flow
 
-> **Built so far (Step 11):** research → hypothesis → critique → **decision gate**: a bounded LangGraph research workflow (Step 10), then one decision per finished research run through a DarwinUX-owned Decider port — `rules.v1` baseline, a test double, an LLM-port baseline and a documented-but-live-unverified Jev adapter — with fail-closed policy and `decision_run` records (AGENT_ARCHITECTURE.md, "Current Implementation (Step 11)"). `proceed` only marks eligibility for a future stage. Muse, MutationSpec, sandbox, mutation evaluation, experiments and deployment below are still design.
+> **Built so far (Step 12):** research → hypothesis → critique → decision gate → **candidate mutation**: a proceed decision (re-checked for stale provenance) produces a MutationRequest; a MutationGenerator (fixture, LLM-port baseline; Muse is an unimplemented seam) proposes a data-only MutationSpec; DarwinUX validates it against an explicit mutation surface, applies it in memory, proves only allowed leaves changed, and stores an immutable candidate UI Spec (`ui_spec_version`, `mutation_run`) that the frontend's real Zod schema accepts. Sandbox rendering, mutation evaluation, human approval, experiments, promotion and deployment below are still design.
 
 ```mermaid
 graph TD
@@ -370,6 +370,7 @@ darwin-ux/
 │   │       ├── hypotheses/        # signal → evidence → one structured call → validated Hypothesis (Step 9)
 │   │       ├── research/          # LangGraph research workflow: graph, budgets, critique, resume (Step 10)
 │   │       ├── decisions/         # decision gate: port, rules, test double, LLM baseline, Jev adapter (Step 11)
+│   │       ├── mutations/         # candidate mutations: surface, MutationSpec, apply, generators, UI Spec versions (Step 12)
 │   │       ├── evaluation/        # Evaluation engine, metrics, judges
 │   │       ├── pipelines/         # Telemetry & ingestion processing logic
 │   │       ├── mutation/          # UI Spec, component registry, MutationSpec validation
