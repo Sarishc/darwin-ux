@@ -172,6 +172,12 @@ A record of a retrieval operation against Product Memory.
 
 ---
 
+### Decision runs — implemented (Step 11)
+
+As built in migration 0007 (the Jev Decision design further below; this is its first concrete form):
+
+- **decision_run** — one explicit decision about one finished research run; repeated invocations are separate rows. `id`, `research_run_id` (FK), `hypothesis_id` (FK), `request_version` (`decision_request.v1`), `request_hash` (sha256 of the canonical request — same facts, same hash), `decider` (CHECK `rules | fake | llm | jev`), `decider_version` (e.g. `rules.v1`, `jev:jev-1.13.0`), `decision` (CHECK: the FINAL decision after policy), `status` (CHECK `decided | overridden | failed_closed`), `decider_decision` (what the decider validly said, if anything), `confidence` (qualitative), `provider_confidence` (0–1, uncalibrated), `reason_codes` (non-empty, allowlisted), `error_type` (NULL **iff** decided), `validation_errors` (`[{loc, type}]`, no values), `input_tokens` / `output_tokens`, `latency_ms`, `created_at`. CHECKs: `failed_closed` ⇒ `human_review`; `proceed` ⇒ `decided`. Index on `research_run_id`.
+
 ### Research runs — implemented (Step 10)
 
 As built in migration 0006 (the AgentRun design below; `research_run` is its first concrete form):

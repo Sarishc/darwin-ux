@@ -15,7 +15,7 @@ PG_LOG = $(shell brew --prefix)/var/log/$(PG_FORMULA).log
 	db-start db-stop db-status db-logs db-setup \
 	migrate migration-status migrate-sql queue-status test-integration \
 	memory-ingest memory-query memory-eval hypothesis-generate hypothesis-eval \
-	research-run research-resume research-eval
+	research-run research-resume research-eval decision-run decision-eval
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-17s %s\n", $$1, $$2}'
@@ -121,6 +121,16 @@ research-resume: ## Resume a run waiting for review: RUN_ID=<uuid> DECISION=appr
 
 research-eval: ## Golden research-workflow eval: outcomes + trajectories (rolled back)
 	$(BACKEND) uv run $(ENV_FILE) python -m darwin.research.evaluation
+
+# ---- Decision gate (Step 11): rules | fake (test double) | llm (fake provider) | jev ----
+
+decision-run: ## Decide RUN_ID=<research run> (default: latest finished) [DECIDER=rules|fake|fake_jev|llm|jev]
+	$(BACKEND) uv run $(ENV_FILE) python -m darwin.decisions.cli \
+		$(if $(RUN_ID),--run-id $(RUN_ID)) $(if $(DECIDER),--decider $(DECIDER)) \
+		$(if $(FAKE_MODE),--fake-mode $(FAKE_MODE)) $(if $(SHOW_REQUEST),--show-request)
+
+decision-eval: ## Golden decision eval, each decider reported separately (rolled back)
+	$(BACKEND) uv run $(ENV_FILE) python -m darwin.decisions.evaluation
 
 test-integration: ## Integration tests against local darwin_test (needs PostgreSQL 17)
 	$(BACKEND) uv run $(ENV_FILE) pytest -m integration

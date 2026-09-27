@@ -14,7 +14,7 @@ local files.
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, PostgresDsn, field_validator
+from pydantic import Field, PostgresDsn, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 Environment = Literal["local", "test", "dev", "prod"]
@@ -35,7 +35,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="DARWIN_",
-        # .env.example already lists future variables (e.g. DARWIN_DECIDER_ADAPTER);
+        # .env.example already lists future variables (e.g. DARWIN_MUTATION_GENERATOR_ADAPTER);
         # ignore them until a field for them exists.
         extra="ignore",
         # `DARWIN_DATABASE_URL=` (empty, as in a copied template) means "not set":
@@ -62,6 +62,12 @@ class Settings(BaseSettings):
     cors_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: list(DEFAULT_CORS_ORIGINS)
     )
+
+    # Jev decision adapter (Step 11). Optional: unset means DECIDER=jev is unavailable,
+    # never a startup failure. The key is a TypeSafe API key (Bearer auth, per
+    # docs.typesafe.ai/api); the variable names are DarwinUX's own.
+    jev_api_key: SecretStr | None = None
+    jev_model: str = "jev-latest"
 
     @field_validator("log_level", mode="before")
     @classmethod

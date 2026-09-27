@@ -362,6 +362,17 @@ Jev is an AI component and is evaluated like one. Because every `Decision` recor
 
 Jev is kept at a gate only if it beats the simpler adapters on these metrics. That is the honest version of "use AI where it adds value."
 
+**Implemented (Step 11), the harness:** `make decision-eval` writes 27 golden research artifacts as real rows (one rolled-back transaction per decider) and scores each decider **separately** (`backend/tests/evals/golden/decisions.json`, `artifacts/decision-eval.json`, schema `darwinux.decision-eval.v1`): accuracy, per-class precision/recall, a confusion matrix, the **fail-open count** (expected human_review/reject, recorded proceed), fail-closed count, policy overrides, invalid-output and decider-failure handling, human-review rate, confidence by decision, and ineligible artifacts refused with zero decider calls. No calibration metric: no decider has a calibrated numeric confidence (Jev's documented confidence is a distribution statistic, not a probability).
+
+| Decider | Accuracy (20 eligible) | Fail-open | Fail-closed | Overrides | Ineligible refused |
+|---|---|---|---|---|---|
+| `rules.v1` | 20/20 | 0 | 0 | 0 | 7/7 |
+| `fake_decider.v1` (reckless test double) | 7/20 | 2 | 8 | 5 | 7/7 |
+| `llm_decision.v1` (FakeLLMProvider, "cautious") | 4/20 | 0 | 4 | 0 | 7/7 |
+| Jev | not evaluated — no API key; `--include-jev` when available | | | | |
+
+Read these honestly: the golden labels encode DarwinUX's own decision policy, and `rules.v1` implements that policy, so its 20/20 is **by construction** — the set is a specification test of the gate, not evidence that the rules make good decisions. The test double's two fail-opens (missing evidence, critique issues) show exactly what the hard-precondition policy does *not* contain when a valid decider is reckless; every *failure* case is contained (0 fail-opens among failed_closed runs, enforced by a database CHECK). Comparing Jev meaningfully needs independently labelled real artifacts.
+
 ## Evaluating Muse Generations
 
 | Metric | Type | What It Measures |

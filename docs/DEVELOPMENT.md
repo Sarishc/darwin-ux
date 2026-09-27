@@ -1,6 +1,6 @@
 # DarwinUX — Development Environment
 
-> **Status (Step 10):** a bounded LangGraph research workflow (retrieval → sufficiency heuristic → ≤ 1 refinement → Step 9 hypothesis → critique → accept / human review via CLI resume / reject / stop; `research_run` / `research_step`); hypothesis generation (signal → Product Memory evidence → one structured call through an LLM port → strict validation → `hypothesis_run` / `hypothesis`; deterministic `FakeLLMProvider` only); Product Memory (retrieval only: allowlisted docs → chunks → embeddings in pgvector → filtered vector search → golden-set evaluation); a Next.js demo app (`/demo`, Generation 0) rendered from a validated UI Spec, with a browser telemetry SDK; the FastAPI *producer*; a separate worker (*consumer*) connected by a durable PostgreSQL-backed queue; deterministic behaviour signals; PostgreSQL 17 (telemetry, signals, queue, Product Memory, hypotheses, research runs); backend and frontend tests. No Docker, no AWS, no real LLM provider, no Jev, no Muse yet.
+> **Status (Step 11):** a decision gate after research (Decider port: `rules.v1`, a test double, an LLM-port baseline, a Jev adapter not yet called live; fail-closed policy; `decision_run`); a bounded LangGraph research workflow (retrieval → sufficiency heuristic → ≤ 1 refinement → Step 9 hypothesis → critique → accept / human review via CLI resume / reject / stop; `research_run` / `research_step`); hypothesis generation (signal → Product Memory evidence → one structured call through an LLM port → strict validation → `hypothesis_run` / `hypothesis`; deterministic `FakeLLMProvider` only); Product Memory (retrieval only: allowlisted docs → chunks → embeddings in pgvector → filtered vector search → golden-set evaluation); a Next.js demo app (`/demo`, Generation 0) rendered from a validated UI Spec, with a browser telemetry SDK; the FastAPI *producer*; a separate worker (*consumer*) connected by a durable PostgreSQL-backed queue; deterministic behaviour signals; PostgreSQL 17 (telemetry, signals, queue, Product Memory, hypotheses, research runs, decisions); backend and frontend tests. No Docker, no AWS, no real LLM provider, no live Jev call, no Muse yet.
 
 ## 1. Prerequisites
 
@@ -81,7 +81,7 @@ Why the src layout: tests import `darwin` the way users of the installed package
 - DarwinUX's own settings are prefixed `DARWIN_` to avoid collisions.
 - Standard names are kept where libraries already read them (`AWS_PROFILE`, `AWS_REGION`, `OTEL_*`).
 - Categories in the template: application, database, LLM, embeddings, Jev, Muse, AWS, observability.
-- **Jev and Muse connection variables are deliberately absent.** Their official access methods and credential names are unverified (OPEN_QUESTIONS.md B1/B2). The template only contains DarwinUX-owned *adapter selectors* (`DARWIN_DECIDER_ADAPTER`, `DARWIN_MUTATION_GENERATOR_ADAPTER`) whose values are DarwinUX's own baselines.
+- **Jev (Step 11):** `DARWIN_JEV_API_KEY` / `DARWIN_JEV_MODEL` are DarwinUX setting names for TypeSafe's documented Bearer-key HTTP API (OPEN_QUESTIONS.md B1); both optional. **Muse connection variables are deliberately absent** — its access method is unverified (B2); the template only has the DarwinUX-owned selector `DARWIN_MUTATION_GENERATOR_ADAPTER`.
 - Never put real keys in `.env.example`, in code, in tests, in docs, or in Terraform. For AWS, prefer SSO/named profiles over access keys.
 
 ## 7. Quality Tools
@@ -159,6 +159,8 @@ A small root `Makefile` wraps the real commands. It only delegates to uv — uv 
 | `make research-run [SIGNAL_ID=…] [SIGNAL_TYPE=…] [CRITIQUE_MODE=…]` | `python -m darwin.research.cli run` | One research run (LangGraph, fake provider); may end waiting for human review |
 | `make research-resume RUN_ID=… DECISION=approve\|reject` | `python -m darwin.research.cli resume` | Apply a human decision to a run waiting for review (allowlisted decisions only) |
 | `make research-eval` | `python -m darwin.research.evaluation` | Golden research eval: outcomes + trajectories (19 cases, rolled back); writes `artifacts/research-eval.json` (git-ignored) |
+| `make decision-run [RUN_ID=…] [DECIDER=rules\|fake\|llm\|jev]` | `python -m darwin.decisions.cli` | One decision about a finished research run; records a `decision_run` |
+| `make decision-eval` | `python -m darwin.decisions.evaluation` | Golden decision eval (27 cases), each decider separately, with fail-open counts; writes `artifacts/decision-eval.json` (git-ignored) |
 
 Without make, run the same commands from `backend/`, e.g.:
 
@@ -230,6 +232,7 @@ nvm alias default 24
 | A real LLM provider SDK / credentials | When chosen (OPEN_QUESTIONS.md N1) | The port + FakeLLMProvider prove the control layer offline; a real provider must pass `make hypothesis-eval` |
 | LangGraph Postgres checkpointer | Not planned yet (OPEN_QUESTIONS.md N15) | Resume needs only ids and counters DarwinUX already persists |
 | LangChain agents, tools, chains, loaders | Not planned | The graph orchestrates DarwinUX services directly; no tool registry |
+| TypeSafe (Jev) SDK | Not planned for the gate | Its automatic retries would hide extra calls behind one audited decision; the adapter makes one plain HTTP call |
 | LLM-as-judge | Later | Judges need a real provider and agreement checks |
 | Dockerfile for the app | Later step | Running on the host is faster to iterate on |
 | Evolution Lab (`/lab`), synthetic user simulator | Later steps | Demo surface and telemetry come first |
@@ -270,6 +273,18 @@ backend/src/darwin/
 ├── llm/
 │   ├── port.py        # LLMProvider protocol, request/result/usage, error types
 │   └── fake.py        # FakeLLMProvider: deterministic, one mode per failure
+├── decisions/         # decision gate after research (Step 11)
+│   ├── vocabulary.py  # decisions, reason codes, confidence, DecisionOutput
+│   ├── request.py     # DecisionRequest (decision_request.v1) + eligibility checks
+│   ├── port.py        # Decider protocol, DeciderReply, error types
+│   ├── policy.py      # strict validation + fail-closed policy
+│   ├── rules.py       # RulesDecider (rules.v1) baseline
+│   ├── fake.py        # FakeDecider test double (fake_decider.v1)
+│   ├── llm.py         # LLMDecider baseline (llm_decision.v1, decision.v1 request)
+│   ├── jev.py         # JevAdapter (documented TypeSafe HTTP API; not called live)
+│   ├── service.py     # decide_research_run()
+│   ├── cli.py         # make decision-run
+│   └── evaluation.py  # per-decider golden eval (make decision-eval)
 ├── research/          # bounded LangGraph research workflow (Step 10)
 │   ├── budget.py      # hard caps; ResearchBudget (tighter only)
 │   ├── state.py       # ResearchState (typed graph state)
@@ -781,6 +796,24 @@ make research-eval                                   # golden outcomes + traject
 `FAKE_MODE=` / `CRITIQUE_MODE=` select fake behaviours (`python -m darwin.research.cli run --help`). The CLI prints the trajectory, budget use, hypothesis and critique; logs carry ids, node names, outcomes, counters and token counts only.
 
 Dependencies: `langgraph` (1.2.x) is the only direct addition. It brings `langchain-core` (and through it `langsmith`), `langgraph-checkpoint`, `langgraph-prebuilt` and `langgraph-sdk` transitively; DarwinUX imports none of them. LangSmith traces only when its environment variables enable it — research **refuses to run** if `LANGSMITH_TRACING` / `LANGCHAIN_TRACING_V2` (or similar) are set, because that would ship evidence text to a third party.
+
+---
+
+## 19. Decision Gate (Step 11)
+
+One decision per finished research run, through a Decider. Design, policy and the Jev status: AGENT_ARCHITECTURE.md, "Current Implementation (Step 11)".
+
+```bash
+make decision-run                                   # latest succeeded/rejected research run, rules.v1
+make decision-run RUN_ID=<research run uuid> DECIDER=rules
+make decision-run DECIDER=fake FAKE_MODE=timeout    # test double (alias: fake_jev); recorded as "fake"
+make decision-run DECIDER=llm                       # LLM-port baseline on the FakeLLMProvider
+make decision-run DECIDER=jev                       # needs DARWIN_JEV_API_KEY; otherwise a clear error, no fallback
+make decision-run SHOW_REQUEST=1                    # also print the DecisionRequest
+make decision-eval                                  # every decider, separately; rolled back
+```
+
+`DARWIN_JEV_API_KEY` (TypeSafe API key, Bearer auth) and `DARWIN_JEV_MODEL` (default `jev-latest`) are optional; with no key, `DECIDER=jev` stops before anything is called and nothing is recorded. `cd backend && uv run --env-file ../.env python -m darwin.decisions.evaluation --include-jev` adds Jev to the evaluation once a key exists (it sends the 20 eligible golden requests to TypeSafe).
 
 ---
 

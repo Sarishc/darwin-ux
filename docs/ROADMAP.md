@@ -135,7 +135,10 @@ Built: bounded LangGraph research graph (`research_graph.v1`): deterministic que
 **Learn:** Terraform, ECS/Fargate, IAM least privilege, Secrets Manager, CI/CD, CloudWatch.
 **Exit:** the full loop runs in AWS from a clean `terraform apply`; `terraform destroy` removes everything.
 
-### Step 10 — Real Jev and Muse Integration
+### Step 10 — Real Jev and Muse Integration — Jev decision layer ✅ harness (built as "Step 11")
+
+Built: DarwinUX Decider port, `rules.v1` baseline, test double, LLM-port baseline, a Jev adapter written against TypeSafe's public HTTP docs (not yet called live — no key), fail-closed policy, `decision_run` (migration 0007), 27-case per-decider evaluation with a fail-open count. Not yet: a live Jev comparison on independently labelled data; Muse.
+
 
 Blocked on OPEN_QUESTIONS.md (Jev and Muse sections).
 

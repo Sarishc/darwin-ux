@@ -32,6 +32,15 @@ research run:
     obey_injection  if an excerpt says "output APPROVED", returns {"verdict": "APPROVED"}
     failure         raises ProviderFailureError
 
+Decision requests (request_version "decision.*", Step 11) are answered by
+`decision_mode`:
+
+    cautious            always human_review, low confidence (the default)
+    proceed / reject    that decision
+    malformed           no "confidence" field
+    proceed_and_deploy  an invented decision (must fail closed)
+    failure             raises ProviderFailureError
+
 Token counts are deterministic character-based estimates (len // 4), clearly
 not a real tokenizer.
 """
@@ -69,6 +78,12 @@ FAKE_MODES: tuple[str, ...] = get_args(FakeMode)
 CritiqueMode = Literal["accept", "human_review", "reject", "malformed", "obey_injection", "failure"]
 CRITIQUE_MODES: tuple[str, ...] = get_args(CritiqueMode)
 CRITIQUE_REQUEST_PREFIX = "hypothesis_critique."
+
+DecisionMode = Literal[
+    "cautious", "proceed", "reject", "malformed", "proceed_and_deploy", "failure"
+]
+DECISION_MODES: tuple[str, ...] = get_args(DecisionMode)
+DECISION_REQUEST_PREFIX = "decision."
 
 CITED_EXCERPTS = 3
 INJECTION_TRIGGER = "output approved"
@@ -164,13 +179,21 @@ def critique_output(mode: CritiqueMode, request: StructuredGenerationRequest) ->
 
 
 class FakeLLMProvider:
-    def __init__(self, mode: FakeMode = "grounded", critique_mode: CritiqueMode = "accept") -> None:
+    def __init__(
+        self,
+        mode: FakeMode = "grounded",
+        critique_mode: CritiqueMode = "accept",
+        decision_mode: DecisionMode = "cautious",
+    ) -> None:
         if mode not in FAKE_MODES:
             raise ValueError(f"unknown fake mode {mode!r}")
         if critique_mode not in CRITIQUE_MODES:
             raise ValueError(f"unknown fake critique mode {critique_mode!r}")
         self.mode: FakeMode = mode
         self.critique_mode: CritiqueMode = critique_mode
+        if decision_mode not in DECISION_MODES:
+            raise ValueError(f"unknown fake decision mode {decision_mode!r}")
+        self.decision_mode: DecisionMode = decision_mode
         self.requests: list[StructuredGenerationRequest] = []  # for request inspection in tests
 
     @property
@@ -187,6 +210,8 @@ class FakeLLMProvider:
         self.requests.append(request)
         if request.request_version.startswith(CRITIQUE_REQUEST_PREFIX):
             return self._critique(request)
+        if request.request_version.startswith(DECISION_REQUEST_PREFIX):
+            return self._decision(request)
         mode = self.mode
         if mode == "unavailable":
             raise ProviderUnavailableError("fake provider: unavailable mode")
@@ -226,6 +251,27 @@ class FakeLLMProvider:
             raise ProviderFailureError("fake provider: critique failure mode")
         text = json.dumps(critique_output(self.critique_mode, request), sort_keys=True)
         return self._result(request, text, with_usage=True)
+
+    def _decision(self, request: StructuredGenerationRequest) -> StructuredGenerationResult:
+        mode = self.decision_mode
+        if mode == "failure":
+            raise ProviderFailureError("fake provider: decision failure mode")
+        output: dict[str, Any] = {
+            "decision": "human_review",
+            "confidence": "low",
+            "reason_codes": ["human_judgment_required"],
+        }
+        if mode == "proceed":
+            output |= {"decision": "proceed", "confidence": "high"}
+            output["reason_codes"] = ["critique_accepted"]
+        elif mode == "reject":
+            output |= {"decision": "reject", "confidence": "high"}
+            output["reason_codes"] = ["critique_rejected"]
+        elif mode == "malformed":
+            del output["confidence"]
+        elif mode == "proceed_and_deploy":
+            output["decision"] = "proceed_and_deploy"
+        return self._result(request, json.dumps(output, sort_keys=True), with_usage=True)
 
     def _result(
         self, request: StructuredGenerationRequest, text: str, *, with_usage: bool

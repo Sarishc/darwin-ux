@@ -10,6 +10,8 @@ Anything about Jev or Muse that is not answered here must not be assumed anywher
 
 Known: Jev is a proprietary AI model developed by TypeSafe AI, treated in DarwinUX as a decision-oriented component.
 
+**Step 11 update — documented publicly** (docs.typesafe.ai/api, /models, /confidence; read 2026-09-27): (1) hosted HTTP API `POST https://api.typesafe.ai/v1/systemone` plus official client SDKs; (2) JSON body `{state, model, questions}`, `state` may be text, an object or an array; (3) typed questions `noul` / `choice` / `score` with schema-shaped answers (`choice`, `probabilities`, `confidence`), plus `usage`; (4) `confidence` is a statistic derived from the probability distribution, not a probability — no calibration claim found; (6, partly) versioned model ids (`jev-1.13.0`) and aliases (`jev-latest`); (8) Bearer API key. The adapter is implemented against this but **never called live**. Still unknown below: 5, determinism in 6, 7, 9, 10.
+
 Unknown — to be verified with TypeSafe AI documentation or contacts:
 
 1. How is Jev accessed (hosted API, SDK, self-hosted, other)? What is the official interface?

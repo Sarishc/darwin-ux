@@ -12,9 +12,11 @@ It is not a chatbot wrapper. It is a closed-loop system where software evolves t
 
 ## Status
 
-**Step 10 — LangGraph Research Workflow** (Steps 0–9 complete)
+**Step 11 — Jev Decision Layer + Decision Evaluation** (Steps 0–10 complete)
 
-A bounded LangGraph graph (`research_graph.v1`) orchestrates the existing services for one signal: deterministic Product Memory retrieval with a sufficiency heuristic and at most one refinement, the Step 9 grounded hypothesis, one strict critique call, then accept, pause for human review (resumed from the CLI with an allowlisted decision), reject, or stop. Hard budgets (2 retrievals, 2 LLM calls, 12 steps) are enforced in code and by database CHECKs; every run and step is persisted (`research_run`, `research_step`). A 19-case golden set checks outcomes **and** trajectories. Still only a deterministic `FakeLLMProvider` — no Jev, no Muse, no mutations, no experiments.
+After a finished research run, one bounded decision — `proceed` (eligible for a *future* mutation stage, nothing more), `human_review` or `reject` — through a DarwinUX-owned Decider port: a deterministic `rules.v1` baseline, a test double, an LLM-port baseline, and a Jev adapter written against TypeSafe AI's public HTTP docs but never called live (no API key). A fail-closed policy outside every model turns any decider failure or invalid output into `human_review` and downgrades `proceed` when hard preconditions fail; `decision_run` rows and database CHECKs record it. A 27-case evaluation scores each decider separately, with a fail-open count. No Muse, no mutations, no experiments.
+
+Step 10 — A bounded LangGraph graph (`research_graph.v1`) orchestrates the existing services for one signal: deterministic Product Memory retrieval with a sufficiency heuristic and at most one refinement, the Step 9 grounded hypothesis, one strict critique call, then accept, pause for human review (resumed from the CLI with an allowlisted decision), reject, or stop. Hard budgets (2 retrievals, 2 LLM calls, 12 steps) are enforced in code and by database CHECKs; every run and step is persisted (`research_run`, `research_step`). A 19-case golden set checks outcomes **and** trajectories. Still only a deterministic `FakeLLMProvider` — no Jev, no Muse, no mutations, no experiments.
 
 Step 9 — hypothesis generation: one bounded, structured LLM call per signal: a BehaviorSignal is turned into a deterministic retrieval query, Product Memory evidence is bundled (marked untrusted), a versioned `hypothesis.v1` request goes through a DarwinUX-owned provider port, and the output must pass a strict schema and deterministic grounding checks (cited ids ⊆ supplied excerpts, allowed component) before it becomes a Hypothesis. Every attempt is an audited `hypothesis_run`. An 18-case golden set measures that control layer.
 
@@ -31,6 +33,7 @@ make web-check  # frontend lint, type check, tests, production build
 make memory-ingest && make memory-eval   # Product Memory: ingest corpus, evaluate retrieval
 make hypothesis-generate && make hypothesis-eval   # hypothesis for the latest signal; golden eval
 make research-run && make research-eval            # research workflow for the latest signal; golden eval
+make decision-run && make decision-eval            # decide the latest finished research run; per-decider eval
 make check  # format check, lint, type check, unit tests
 make db-start && make db-setup && make migrate   # local PostgreSQL 17
 make test-integration

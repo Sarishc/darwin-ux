@@ -88,7 +88,38 @@ START ─> apply_human_decision ─> finalize ─> END     (a resume: same graph
 
 **Future span mapping (OpenTelemetry not added yet).** One span per graph invocation named `research_run` (attributes: `research_run_id`, `signal_id`, `graph_version`, status); a child span per `research_step` (`node`, `sequence`, `outcome`); `retrieve` spans nest Step 8 retrieval; `generate_hypothesis` and `critique_hypothesis` nest a `gen_ai` span with provider, model, request version and token counts. A resume is a new trace linked to the first by `research_run_id` (span link), not one trace spanning a human wait.
 
-**Still future:** LLM-written queries (the full Research agent), a real provider, Jev gates, Muse mutation generation, MutationSpec, experiments.
+**Still future:** LLM-written queries (the full Research agent), a real LLM provider, Muse mutation generation, MutationSpec, sandbox, experiments. (The first Jev gate is Step 11, below.)
+
+## Current Implementation (Step 11): Decision Gate
+
+A bounded gate **after** a finished research run. It is a separate service (`darwin/decisions/`), not a graph node: `research_graph.v1` is unchanged, and no decider has any path to graph transitions, budgets, tools or human gates.
+
+```
+ResearchRun (succeeded | rejected) + Hypothesis + Critique + canonical Signal
+  → eligibility checks ─ fail → DecisionInputError (no decider call, nothing recorded)
+  → DecisionRequest (decision_request.v1: bounded facts only)
+  → Decider.decide  ── exactly one call ──  rules.v1 | fake_decider.v1 | llm_decision.v1 | jev:<model>
+  → strict DecisionOutput validation → fail-closed policy
+  → DecisionRun (final decision: proceed | human_review | reject)
+```
+
+**`proceed` means only** that the research artifact is eligible to enter a *future* mutation-generation stage. Nothing in Step 11 creates, approves or deploys a mutation or starts an experiment.
+
+**Decision port** (`decisions/port.py`, owned by DarwinUX): a decider gets a validated `DecisionRequest` and returns its output *unvalidated* plus the exact implementation version; failures are `DeciderUnavailableError`, `DeciderFailureError`, `DeciderTimeoutError`. The request holds signal type + safe facts, research outcome and accounting, hypothesis statement / component / confidence / cited sources / limitations, critique findings, and fixed constraints — never session or event ids, payloads, Product Memory text, prompts, the rationale or reasoning. Its text fields are model output and are untrusted for any decider that reads them.
+
+**Output** (`DecisionOutput`, strict): `decision` ∈ {proceed, human_review, reject}; `confidence` ∈ {low, medium, high} (qualitative, uncalibrated); 1–4 `reason_codes` from an allowlist of 10 (`critique_accepted`, `sufficient_evidence`, `human_approved`, `human_rejected`, `critique_rejected`, `unsupported_claim`, `missing_evidence`, `critique_issues`, `low_confidence`, `human_judgment_required`); optional `provider_confidence` (a provider's own 0–1 statistic, recorded, never treated as a probability). Two more codes (`decider_failure`, `policy_override`) can only be added by DarwinUX.
+
+**Fail-closed policy (outside every model).** Any exception, timeout, unavailability, non-JSON, unknown field, unknown decision or reason code → **human_review**, status `failed_closed`. A valid `proceed` is kept only if hard preconditions hold (research succeeded, hypothesis accepted, critique accepted or a human approved, no unsupported claims, no low-confidence hypothesis without a human, decider not low-confidence); otherwise it becomes human_review, status `overridden`. A decider may always be *more* cautious. The database repeats this: `failed_closed` rows must be human_review, and `proceed` can only be recorded as `decided`.
+
+**Deciders.**
+- `rules.v1` — the deterministic baseline (first match wins): research rejected → reject; unsupported claims → reject; human approved → proceed; low-confidence hypothesis → review; missing evidence → review; critique issues → review; else proceed.
+- `fake_decider.v1` — a **test double**, not Jev: one mode per misbehaviour (reckless proceed, low-confidence proceed, malformed, extra field, invented decision, invented reason code, failure, timeout, unavailable). It proves containment, nothing about Jev.
+- `llm_decision.v1` — a comparator on the existing LLM port (`decision.v1` request, untrusted-evidence delimiters, same strict validation). Only the FakeLLMProvider exists, so it measures plumbing.
+- `JevAdapter` — see below.
+
+**Jev integration status (honest).** TypeSafe AI publishes HTTP API docs (docs.typesafe.ai/api, /models, /confidence, read 2026-09-27): `POST https://api.typesafe.ai/v1/systemone` with a Bearer API key; `{state, model, questions}`; typed questions (`noul`, `choice`, `score`); choice answers carry `choice`, `probabilities` and a 0–1 `confidence` that the docs describe as a statistic derived from the distribution — explicitly not a probability, with no calibration claim; model ids like `jev-1.13.0` and aliases `jev-latest`. The adapter uses exactly that: two `choice` questions (the gate decision over our three decisions; the primary reason over our reason codes), the DecisionRequest as structured `state`, one attempt (no SDK auto-retry), 401/403 → unavailable, other non-200 → failure — all failing closed. Configured by `DARWIN_JEV_API_KEY` / `DARWIN_JEV_MODEL` (DarwinUX setting names). **It has never been called against the live service** (no key here); tests use a fake transport shaped like the documented examples. Still unknown: determinism, latency, rate limits, pricing, data retention/training use, licensing (OPEN_QUESTIONS B1).
+
+**The Jev value criterion.** Jev earns a production role only if, on a representative, *independently labelled* set of research artifacts (not the rules-derived golden set), it improves meaningful metrics over `rules.v1` — e.g. reject/human_review recall without losing proceed precision — **with a fail-open count no higher than the baseline's**, reported per decider, never averaged. No threshold is set until real data exists; `make decision-eval --include-jev` produces the side-by-side once a key is available.
 
 ## Responsibility Analysis
 

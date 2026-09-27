@@ -185,7 +185,7 @@ A fourth, automatic decision exists: **rollback on guardrail breach** (error rat
 
 ## AI / Agent Decision Flow
 
-> **Built so far (Step 10):** a bounded LangGraph research workflow — *BehaviorSignal → deterministic retrieval (≤ 2 attempts) → Step 9 grounded hypothesis → one critique → accept | human review (CLI resume) | reject | stop* (AGENT_ARCHITECTURE.md, "Current Implementation (Step 10)"). The Jev gates, Muse, mutations, sandbox, experiments and everything after the hypothesis decision below are still design.
+> **Built so far (Step 11):** research → hypothesis → critique → **decision gate**: a bounded LangGraph research workflow (Step 10), then one decision per finished research run through a DarwinUX-owned Decider port — `rules.v1` baseline, a test double, an LLM-port baseline and a documented-but-live-unverified Jev adapter — with fail-closed policy and `decision_run` records (AGENT_ARCHITECTURE.md, "Current Implementation (Step 11)"). `proceed` only marks eligibility for a future stage. Muse, MutationSpec, sandbox, mutation evaluation, experiments and deployment below are still design.
 
 ```mermaid
 graph TD
@@ -369,6 +369,7 @@ darwin-ux/
 │   │       ├── llm/               # LLM provider port + FakeLLMProvider (Step 9)
 │   │       ├── hypotheses/        # signal → evidence → one structured call → validated Hypothesis (Step 9)
 │   │       ├── research/          # LangGraph research workflow: graph, budgets, critique, resume (Step 10)
+│   │       ├── decisions/         # decision gate: port, rules, test double, LLM baseline, Jev adapter (Step 11)
 │   │       ├── evaluation/        # Evaluation engine, metrics, judges
 │   │       ├── pipelines/         # Telemetry & ingestion processing logic
 │   │       ├── mutation/          # UI Spec, component registry, MutationSpec validation
