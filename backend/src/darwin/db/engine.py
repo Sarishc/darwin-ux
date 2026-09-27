@@ -21,6 +21,9 @@ def create_db_engine(database_url: str) -> Engine:
         # connections that died (e.g. PostgreSQL was restarted).
         pool_pre_ping=True,
         connect_args={"connect_timeout": CONNECT_TIMEOUT_SECONDS},
+        # Keep bound values (e.g. telemetry payloads) out of error messages and
+        # logs. SQL text is still shown; the data is not.
+        hide_parameters=True,
     )
 
 

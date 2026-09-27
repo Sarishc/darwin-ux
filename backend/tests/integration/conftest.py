@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import Engine
+from sqlalchemy import Connection, Engine
 from sqlalchemy.orm import Session
 
 from darwin.config import Settings
@@ -75,3 +75,14 @@ def db_session(migrated_engine: Engine) -> Iterator[Session]:
 @pytest.fixture
 def integration_settings(test_database_url: str) -> Settings:
     return Settings(env="test", log_level="WARNING", database_url=test_database_url)
+
+
+@pytest.fixture
+def connection(migrated_engine: Engine) -> Iterator[Connection]:
+    """One connection inside a transaction that is always rolled back."""
+    with migrated_engine.connect() as connection:
+        transaction = connection.begin()
+        try:
+            yield connection
+        finally:
+            transaction.rollback()

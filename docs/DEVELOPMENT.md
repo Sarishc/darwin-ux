@@ -1,6 +1,6 @@
 # DarwinUX — Development Environment
 
-> **Status (Step 3):** FastAPI application with health endpoints, settings, structured logging, a PostgreSQL 17 persistence layer (SQLAlchemy + Alembic, one `user_event` table), unit and integration tests. No AI components yet.
+> **Status (Step 4):** FastAPI application with health endpoints, a telemetry ingestion endpoint (`POST /api/v1/telemetry/events`, synchronous and idempotent), settings, structured logging, a PostgreSQL 17 persistence layer (SQLAlchemy + Alembic, one `user_event` table), unit and integration tests. No queue and no AI components yet.
 
 ## 1. Prerequisites
 
@@ -235,7 +235,12 @@ backend/src/darwin/
 ├── logging_config.py  # JSON log formatter + configure_logging()
 ├── api/
 │   ├── router.py      # the /api/v1 router; includes every v1 router
-│   └── health.py      # /health/live, /health/ready + their response models
+│   ├── health.py      # /health/live, /health/ready + their response models
+│   ├── telemetry.py   # POST /telemetry/events — parse, delegate, respond
+│   └── errors.py      # 422 responses without echoed input values
+├── telemetry/
+│   ├── schemas.py     # TelemetryEvent (request), IngestionResult (response)
+│   └── service.py     # ingest_event(): the transaction + idempotent insert
 └── db/
     ├── base.py        # DeclarativeBase + constraint naming convention
     ├── engine.py      # create_db_engine(), database_is_available() (SELECT 1)
@@ -249,7 +254,7 @@ Outside the package: `backend/alembic/` (migrations), `backend/alembic.ini`, `ba
 
 Modules are added when there is code for them — no empty `rag/`, `agents/`, or `providers/` directories. There is also no `core/` package: generic names like "core" or "utils" become dumping grounds with no clear place in the dependency rule.
 
-**Dependency direction:** `main` → `api`, `db`, `config`, `logging_config`; `api` → `db`; `logging_config` → `config`; `db` and `config` import nothing from `api` or `main`. Nothing imports `main`. This is the start of the layering in ARCHITECTURE.md: the entrypoint wires pieces together; the pieces don't know about the entrypoint.
+**Dependency direction:** `main` → `api`, `db`, `config`, `logging_config`; `api` → `telemetry`, `db`; `telemetry` → `db`; `logging_config` → `config`. Nothing below `api` imports FastAPI routing, and nothing imports `main`. Nothing imports `main`. This is the start of the layering in ARCHITECTURE.md: the entrypoint wires pieces together; the pieces don't know about the entrypoint.
 
 ### How a request becomes a response
 
@@ -310,7 +315,9 @@ Readiness has two checks. `startup_complete` is true between lifespan startup an
 | `tests/test_app.py` | App factory, metadata, independent instances, `/api/v1` versioning |
 | `tests/test_health.py` | Liveness/readiness responses, 503 when the DB is unreachable, before startup and after shutdown |
 | `tests/test_db_unit.py` | Timezone-aware timestamps, per-request sessions closed, test-database guard |
-| `tests/integration/` | Real PostgreSQL behaviour — see "12. Database" |
+| `tests/test_telemetry_schemas.py` | The event contract: UUIDs, timezones, event_type rules, payload shape/size/depth, forbidden fields |
+| `tests/test_telemetry_api.py` | 422 before persistence, no echoed input, deep payloads, DB failure → 500 without leaking payload |
+| `tests/integration/` | Real PostgreSQL behaviour — see "12. Database" and "13. Telemetry Ingestion" |
 | `tests/test_config.py` | Defaults, `DARWIN_` prefix, case-insensitive log level, fail-fast validation, ignoring future variables |
 | `tests/test_logging.py` | JSON output, structured context, robustness, idempotent configuration |
 
@@ -412,6 +419,100 @@ Deleting the PostgreSQL 17 data directory (`$(brew --prefix)/var/postgresql@17`)
 ### pgvector (later)
 
 `pgvector` is installed for PostgreSQL 17 but **not enabled**: no `CREATE EXTENSION`, no vector columns. `make db-status` shows it is available. The RAG step will enable it in a migration.
+
+---
+
+## 13. Telemetry Ingestion
+
+### Endpoint
+
+`POST /api/v1/telemetry/events` — one event per request. Documented at http://127.0.0.1:8000/docs.
+
+The path is namespaced under `/telemetry` because this is a distinct ingestion surface (SDK-facing, high volume, later its own limits and queue), not a generic "events" resource.
+
+### Request
+
+```json
+{
+  "event_id": "5b2f0c8e-4c1a-4a5e-9d6f-0a1b2c3d4e5f",
+  "event_type": "button_click",
+  "session_id": "9c8b7a6f-5e4d-4c3b-8a29-1f0e9d8c7b6a",
+  "occurred_at": "2026-09-26T17:00:00Z",
+  "payload": {"component": "signup_submit"}
+}
+```
+
+| Field | Rule | Why |
+|---|---|---|
+| `event_id` | UUID, required | Client-generated **idempotency key** (see below) |
+| `event_type` | snake_case (`^[a-z][a-z0-9_]*$`), 1–64 chars | Matches the column; consistent names. Not lower-cased for you — `ButtonClick` is rejected, so one event never ends up under two spellings |
+| `session_id` | UUID, required | Random, anonymous per-visit id. Not a user id |
+| `occurred_at` | ISO 8601 **with timezone** | A time without a zone is ambiguous; rejected |
+| `payload` | JSON **object**, optional (default `{}`), ≤ 8 KiB compact JSON, ≤ 5 levels deep | Shape and size are bounded; content is still untrusted |
+
+Anything else — including `id`, `received_at`, `user_id`, `email`, `ip_address`, `user_agent` — is rejected with **422** (`extra="forbid"`). The server owns `id` and `received_at` (PostgreSQL `now()`).
+
+### Responses
+
+| Situation | HTTP | Body |
+|---|---|---|
+| New event | **202** | `{"event_id": "5b2f0c8e-…", "status": "accepted"}` |
+| Same `event_id` again | **202** | `{"event_id": "5b2f0c8e-…", "status": "duplicate"}` |
+| Invalid event | **422** | FastAPI's error list, **without** the rejected values echoed back |
+| Database unavailable / unexpected error | **500** | `Internal Server Error` (nothing stored; safe to retry) |
+
+**Why 202 for both:** a duplicate is not an error — it means idempotency worked. One success code keeps clients simple ("2xx = done, stop retrying"). `202 Accepted` rather than `201 Created` because the contract promises *acceptance*, not that processing has finished; that stays true when a queue is added. Clients must not branch on `status` — it is informational, and a future queued pipeline may report `accepted` for a duplicate.
+
+No database id is returned: clients have no use for it, and it would couple them to storage.
+
+### Idempotency
+
+- The **client** generates `event_id` once, when the event happens, and reuses it on every retry. Only the client can do this: if the server generated the id, a retry after a lost response would look like a brand-new event.
+- The service runs one statement in one transaction: `INSERT … ON CONFLICT (event_id) DO NOTHING RETURNING id`. A returned id means `accepted`; no row means `duplicate`.
+- **Race-safe:** there is no "SELECT, then INSERT". If two deliveries of one event arrive at the same moment, PostgreSQL makes the second wait on the first's row and then skips it. `UNIQUE(event_id)` is the final guarantee — an integration test holds one transaction open and proves the second delivery waits and becomes a duplicate.
+- **First delivery wins.** A duplicate with a different payload does not overwrite the stored event.
+
+### Privacy rules
+
+- Nothing in the contract identifies a person. There are no fields for email, name, account id, IP address, user agent, or device fingerprint, and unknown fields are rejected.
+- `payload` is free-form and **untrusted**: a client could still put personal data in it by mistake. Step 4 bounds its shape and size; it does not try to detect PII. Stricter per-event-type schemas can come later.
+- Payloads are **never logged**, never echoed in 422 errors, and never included in database error messages (the engine uses `hide_parameters=True`).
+- `session_id` is not logged either.
+
+### Logging
+
+One line per ingested event, at INFO:
+
+```json
+{"level": "INFO", "logger": "darwin.telemetry.service", "message": "telemetry event ingested", "context": {"event_id": "5b2f0c8e-…", "event_type": "button_click", "status": "accepted"}}
+```
+
+Logged: `event_id`, `event_type`, `status`. Not logged: `payload`, `session_id`, `occurred_at`.
+
+### Where a queue will attach
+
+`darwin.telemetry.service.ingest_event` is the boundary. The route calls it and knows nothing about SQL. When SQS arrives, `ingest_event` publishes the validated event instead of inserting it, and a worker runs the same idempotent insert. The URL, request schema, status code, and response shape do not change. See DATA_PIPELINES.md, "Current Implementation vs. Target Design".
+
+### Trying it
+
+```bash
+make api
+```
+
+In another terminal (fresh UUIDs each time):
+
+```bash
+curl -s -i -X POST http://127.0.0.1:8000/api/v1/telemetry/events -H 'content-type: application/json' -d "{\"event_id\": \"$(uuidgen)\", \"event_type\": \"button_click\", \"session_id\": \"$(uuidgen)\", \"occurred_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\", \"payload\": {\"component\": \"signup_submit\"}}"
+```
+
+Send the exact same body twice to see `accepted` then `duplicate`. Integration tests for ingestion: `make test-integration` (needs PostgreSQL 17).
+
+### Known limits (Step 4)
+
+- One event per request; no batching.
+- The payload limit is enforced after the body is parsed, so a very large request body is still read into memory before it is rejected. A request-body cap belongs at the edge (load balancer / server config) when the service is exposed publicly.
+- No authentication or rate limiting on the endpoint yet.
+- No bound on how far in the past or future `occurred_at` may be.
 
 ---
 

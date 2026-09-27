@@ -21,6 +21,39 @@ These are separate pipelines because they have different volume characteristics,
 
 Transform raw user interaction events into behavioral signals that can trigger the evolution loop.
 
+### Current Implementation vs. Target Design
+
+The rest of this section describes the **target** pipeline. What exists today is smaller, and there is **no queue yet**:
+
+```
+CURRENT (Step 4) — synchronous, one event per request
+
+Client ──POST /api/v1/telemetry/events──> FastAPI route (api/telemetry.py)
+                                             │ Pydantic: TelemetryEvent (422 if invalid)
+                                             ▼
+                                          telemetry.service.ingest_event(session, event)
+                                             │ one transaction:
+                                             │ INSERT ... ON CONFLICT (event_id) DO NOTHING RETURNING id
+                                             ▼
+                                          PostgreSQL user_event ──> 202 {event_id, status: accepted | duplicate}
+
+
+FUTURE — asynchronous
+
+Client ──POST /api/v1/telemetry/events──> FastAPI route (same)
+                                             │ Pydantic: TelemetryEvent (same)
+                                             ▼
+                                          ingest_event(...) now enqueues ──> SQS ──> worker
+                                                                                      │ same idempotent INSERT
+                                                                                      ▼
+                                                                                   user_event ──> signal detection
+                                          202 {event_id, status: accepted}
+```
+
+What stays the same when the queue arrives: the URL, the `TelemetryEvent` request schema, the `202` status, and the response shape. What changes: `ingest_event` publishes instead of inserting, the idempotent insert moves into the worker, and the API can no longer know synchronously that an event is a duplicate, so it will generally answer `accepted`. That is why the contract tells clients to treat `accepted` and `duplicate` identically.
+
+Not built yet: batching, the queue, workers, signal detection, and the SDK.
+
 ### Flow
 
 ```mermaid
@@ -94,19 +127,19 @@ Free-text fields that can leak personal data (error messages, URLs with query st
 
 #### Stage 2: Ingest (API — Synchronous)
 
-The Telemetry API receives batched events from the SDK via HTTP POST.
+The Telemetry API receives events from the SDK via HTTP POST. (Today: one event per request; batching is a later addition.)
 
-**Why synchronous:** The API must accept or reject the request immediately so the SDK knows whether to retry. This is a thin layer: validate the event schema, enrich with server-side metadata (received timestamp, source IP hash), and push to the queue. Response time target: < 50ms.
+**Why synchronous:** The API must accept or reject the request immediately so the SDK knows whether to retry. This is a thin layer: validate the event schema, add server-owned fields (`received_at`), and hand the event on. No IP address or user agent is stored. Response time target: < 50ms.
 
-**What happens here:**
+**What happens here (target design):**
 ```
 POST /api/v1/telemetry/events
-Body: { events: [UserEvent, ...] }
+Body: one TelemetryEvent (later possibly a batch)
 
 1. Validate event schema (Pydantic)
-2. Reject malformed events with 400
-3. Enrich with server metadata (received_at; no raw IP stored)
-4. Push batch to SQS
+2. Reject malformed events with 422
+3. Server-owned fields are set by the database/worker (received_at, id)
+4. Push to SQS
 5. Return 202 Accepted
 ```
 

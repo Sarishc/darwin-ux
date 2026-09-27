@@ -53,7 +53,8 @@ Documents in `docs/`. No code, no dependencies, no infrastructure.
 Prerequisites: the persistence foundation (Step 2c), CI running `make check`, and minimal OpenTelemetry. `BehaviorSignal` is introduced here, together with the behaviour that uses it.
 
 - Demo target app (Next.js `/demo`) rendering from a seeded **UI Spec** via a component registry — Generation 0, with deliberate friction.
-- Telemetry SDK + `POST /api/v1/telemetry/events` (202) → queue emulator → telemetry worker.
+- ✅ `POST /api/v1/telemetry/events` (202), validated `TelemetryEvent`, idempotent synchronous persistence (built as "Step 4").
+- Telemetry SDK; move ingestion behind a queue → telemetry worker (the endpoint contract stays the same).
 - Idempotent persistence, windowed deterministic signal detectors, DLQ.
 - First version of the synthetic user simulator.
 

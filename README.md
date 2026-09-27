@@ -12,9 +12,9 @@ It is not a chatbot wrapper. It is a closed-loop system where software evolves t
 
 ## Status
 
-**Step 3 — PostgreSQL Persistence Foundation** (Steps 0–2 complete)
+**Step 4 — Telemetry Ingestion** (Steps 0–3 complete)
 
-A FastAPI application with liveness/readiness endpoints, settings, structured logging, and a PostgreSQL 17 persistence layer (SQLAlchemy + Alembic). Local PostgreSQL runs natively via Homebrew — no Docker. No AI components yet. To set up a machine and run it, see [DEVELOPMENT.md](docs/DEVELOPMENT.md).
+A FastAPI application with liveness/readiness endpoints, an idempotent telemetry ingestion endpoint (`POST /api/v1/telemetry/events`, synchronous — no queue yet), settings, structured logging, and a PostgreSQL 17 persistence layer (SQLAlchemy + Alembic). Local PostgreSQL runs natively via Homebrew — no Docker. No AI components yet. To set up a machine and run it, see [DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ```bash
 make sync   # install locked dependencies

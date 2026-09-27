@@ -14,9 +14,11 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from sqlalchemy import make_url
 
 from darwin import __version__
+from darwin.api.errors import validation_error_without_input
 from darwin.api.router import api_v1_router
 from darwin.config import Settings
 from darwin.db.engine import create_db_engine
@@ -69,6 +71,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     # Becomes True when the lifespan startup has run; readiness depends on it.
     app.state.started = False
+    app.add_exception_handler(RequestValidationError, validation_error_without_input)
     app.include_router(api_v1_router)
     return app
 

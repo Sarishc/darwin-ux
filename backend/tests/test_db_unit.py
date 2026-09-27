@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from darwin.db.engine import create_db_engine
 from darwin.db.models import UserEvent
 from darwin.db.safety import UnsafeDatabaseError, require_local_test_database
 from darwin.db.session import DbSession
@@ -57,6 +58,17 @@ def test_each_request_gets_its_own_session_which_is_closed_afterwards(app: FastA
     # Closing a session discards its pending objects; nothing leaks between requests.
     assert first_obj not in first
     assert second_obj not in second
+
+
+# ---- Engine configuration ---------------------------------------------------
+
+
+def test_engine_keeps_bound_values_out_of_error_messages() -> None:
+    # Telemetry payloads are bound parameters; they must never appear in
+    # database exception text or tracebacks.
+    engine = create_db_engine("postgresql+psycopg://darwin@127.0.0.1:1/darwin_unit_test")
+
+    assert engine.hide_parameters is True
 
 
 # ---- Destructive-operation guard ----------------------------------------------
