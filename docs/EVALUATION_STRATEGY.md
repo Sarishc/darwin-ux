@@ -73,6 +73,17 @@ graph TD
 
 ---
 
+**Implemented (Step 8):** `make memory-eval` runs the golden retrieval set (`backend/tests/evals/golden/retrieval.json`, 26 queries including paraphrases, every corpus source covered) against each chunking config, each in a rolled-back transaction, and writes `artifacts/retrieval-eval.json` (schema `darwinux.retrieval-eval.v1`; gitignored, reproducible). Definitions, per query then averaged — always reported **separately**, never combined into one score:
+
+- a retrieved chunk is **relevant** if its source is one of the case's expected sources (and, when the case lists sections, its section matches one);
+- **Precision@K** = relevant chunks in the top K / K;
+- **Recall@K** = expected sources found in the top K / expected sources;
+- **MRR** = mean of 1 / rank of the first relevant chunk (0 if none in the top K).
+
+The baseline uses the deterministic hashing embedding provider, so results are identical run to run; they measure the harness and chunking, not semantic quality. See RAG_ARCHITECTURE.md, "Current Implementation (Step 8)", for the numbers and their interpretation.
+
+---
+
 ### Level 2: LLM Evaluation
 
 **What we're evaluating:** Do LLM calls (hypothesis generation, critique, etc.) produce high-quality, well-structured outputs?

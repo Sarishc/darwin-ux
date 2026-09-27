@@ -50,6 +50,8 @@ override.tf.json
 *_override.tf.json
 
 # ---- Local artefacts -------------------------------------------------------
+# Generated evaluation reports (reproducible with make memory-eval)
+artifacts/
 *.log
 logs/
 tmp/

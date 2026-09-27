@@ -63,7 +63,10 @@ Prerequisites: the persistence foundation (Step 2c), CI running `make check`, an
 **Learn:** async processing, queues, idempotency, data pipelines, first Next.js/TypeScript work.
 **Exit:** simulated users produce events; rage-click/abandonment signals appear in Postgres; replaying a batch changes nothing.
 
-### Step 3 — Product Memory (RAG)
+### Step 3 — Product Memory (RAG) ✅ foundation (built as "Step 8")
+
+Built: allowlisted corpus, deterministic chunking, embedding port + hashing baseline provider, pgvector (exact search), SQL filters, retrieval runs, 26-query golden set with Precision@K / Recall@K / MRR across three chunking configs. Not yet: a real embedding provider, reranking, HNSW, raw-document storage in S3, an ingestion worker.
+
 
 - Ingestion worker: raw storage, hashing, parsing, normalization, chunking, embeddings, pgvector index.
 - Retrieval service: vector search with SQL filters, context construction; `RetrievalRun` records.

@@ -28,4 +28,13 @@ WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'darwin_dev') \gexec
 SELECT 'CREATE DATABASE darwin_test OWNER darwin'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'darwin_test') \gexec
 
-\echo 'Done: role darwin, databases darwin_dev and darwin_test.'
+-- pgvector (Step 8). Not a *trusted* extension, so the non-superuser `darwin`
+-- role cannot create it; this superuser setup enables it once per database
+-- (on RDS, the rds_superuser role does the same). Migration 0004 then only
+-- runs CREATE EXTENSION IF NOT EXISTS, which is a no-op here.
+\connect darwin_dev
+CREATE EXTENSION IF NOT EXISTS vector;
+\connect darwin_test
+CREATE EXTENSION IF NOT EXISTS vector;
+
+\echo 'Done: role darwin, databases darwin_dev and darwin_test, extension vector.'

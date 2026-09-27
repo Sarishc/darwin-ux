@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "ai_cannot_edit_code",
+      "query": "How is the AI prevented from rewriting production source code?",
+      "relevant_sources": ["docs/MUTATION_SAFETY.md"]
+    },
+    {
+      "id": "forbidden_zones",
+      "query": "Which areas like login, permissions or cloud roles can automated changes never touch?",
+      "relevant_sources": ["docs/MUTATION_SAFETY.md"],
+      "note": "paraphrase: auth/IAM -> login/permissions/cloud roles"
+    },
+    {
+      "id": "undo_bad_change",
+      "query": "How do we undo an interface change that made things worse for users?",
+      "relevant_sources": ["docs/MUTATION_SAFETY.md"],
+      "note": "paraphrase of rollback / reversibility"
+    },
+    {
+      "id": "worker_crash_before_ack",
+      "query": "What happens if the worker dies after saving an event but before acknowledging the message?",
+      "relevant_sources": ["docs/DATA_PIPELINES.md"]
+    },
+    {
+      "id": "duplicate_delivery",
+      "query": "Why can the same queued message be processed more than once, and why is that safe?",
+      "relevant_sources": ["docs/DATA_PIPELINES.md"]
+    },
+    {
+      "id": "concurrent_workers",
+      "query": "How do several workers avoid grabbing the same queue message at the same time?",
+      "relevant_sources": ["docs/DATA_PIPELINES.md"]
+    },
+    {
+      "id": "poison_messages",
+      "query": "What happens to a message that keeps failing every time it is processed?",
+      "relevant_sources": ["docs/DATA_PIPELINES.md"]
+    },
+    {
+      "id": "why_async_queue",
+      "query": "Why does the API put telemetry on a queue instead of processing it during the request?",
+      "relevant_sources": ["docs/DATA_PIPELINES.md", "docs/ARCHITECTURE.md"]
+    },
+    {
+      "id": "rage_click_rule",
+      "query": "How many clicks on one button in how many seconds count as a rage click?",
+      "relevant_sources": ["signals/detector-definitions", "docs/DATA_PIPELINES.md"]
+    },
+    {
+      "id": "error_burst_rule",
+      "query": "When do repeated form or client errors in a session become a behaviour signal?",
+      "relevant_sources": ["signals/detector-definitions", "docs/DATA_PIPELINES.md"]
+    },
+    {
+      "id": "late_events",
+      "query": "What if an event arrives late and changes which burst was detected?",
+      "relevant_sources": ["docs/DATA_PIPELINES.md"]
+    },
+    {
+      "id": "generation_zero_page",
+      "query": "What components make up the Generation 0 pricing and signup page?",
+      "relevant_sources": ["frontend/src/ui-spec/generation-0.json"]
+    },
+    {
+      "id": "delayed_cta",
+      "query": "Which plan's call to action button responds slowly without feedback?",
+      "relevant_sources": ["frontend/src/ui-spec/generation-0.json"]
+    },
+    {
+      "id": "form_error_display",
+      "query": "How does the demo signup form show its validation errors?",
+      "relevant_sources": ["frontend/src/ui-spec/generation-0.json"]
+    },
+    {
+      "id": "cors_origins",
+      "query": "Which browser origins are allowed to call the API, and are credentials sent?",
+      "relevant_sources": ["docs/DATA_PIPELINES.md"]
+    },
+    {
+      "id": "form_values_privacy",
+      "query": "Does the browser SDK ever send what a person types into the form?",
+      "relevant_sources": ["docs/DATA_PIPELINES.md"]
+    },
+    {
+      "id": "retrieval_metrics",
+      "query": "How is retrieval quality measured with precision, recall and reciprocal rank?",
+      "relevant_sources": ["docs/EVALUATION_STRATEGY.md"]
+    },
+    {
+      "id": "golden_datasets",
+      "query": "What is a golden dataset and how should it be built and maintained?",
+      "relevant_sources": ["docs/EVALUATION_STRATEGY.md"]
+    },
+    {
+      "id": "blocking_evals",
+      "query": "Which AI evaluation results should stop a deployment and which only produce a report?",
+      "relevant_sources": ["docs/EVALUATION_STRATEGY.md", "docs/AWS_ARCHITECTURE.md"]
+    },
+    {
+      "id": "judge_reliability",
+      "query": "How do we know whether an LLM used as a judge can be trusted?",
+      "relevant_sources": ["docs/EVALUATION_STRATEGY.md"]
+    },
+    {
+      "id": "container_hosting",
+      "query": "Which AWS service runs the API and the workers as containers?",
+      "relevant_sources": ["docs/AWS_ARCHITECTURE.md"]
+    },
+    {
+      "id": "production_secrets",
+      "query": "Where are production credentials and API keys kept in the cloud?",
+      "relevant_sources": ["docs/AWS_ARCHITECTURE.md"]
+    },
+    {
+      "id": "cloud_cost",
+      "query": "How is the monthly cloud bill kept low for a single developer?",
+      "relevant_sources": ["docs/AWS_ARCHITECTURE.md"]
+    },
+    {
+      "id": "ai_subsystems",
+      "query": "What are the main AI subsystems and what role does each one play?",
+      "relevant_sources": ["docs/ARCHITECTURE.md"]
+    },
+    {
+      "id": "jev_unavailable",
+      "query": "What should a decision gate do when the Jev model is unavailable or returns garbage?",
+      "relevant_sources": ["docs/ARCHITECTURE.md"]
+    },
+    {
+      "id": "product_is_not",
+      "query": "Is DarwinUX a chatbot, a design tool, or something else?",
+      "relevant_sources": ["docs/PRODUCT.md"]
+    }
+  ]
+}

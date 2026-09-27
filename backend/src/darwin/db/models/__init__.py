@@ -2,7 +2,15 @@
 (Alembic imports it so it can see the full schema)."""
 
 from darwin.db.models.behavior_signal import BehaviorSignal
+from darwin.db.models.knowledge import KnowledgeChunk, KnowledgeDocument, RetrievalRun
 from darwin.db.models.queue_message import QueueMessage
 from darwin.db.models.user_event import UserEvent
 
-__all__ = ["BehaviorSignal", "QueueMessage", "UserEvent"]
+__all__ = [
+    "BehaviorSignal",
+    "KnowledgeChunk",
+    "KnowledgeDocument",
+    "QueueMessage",
+    "RetrievalRun",
+    "UserEvent",
+]

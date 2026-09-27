@@ -102,6 +102,14 @@ Not a domain entity — the durable record of one unit of asynchronous work in t
 
 ---
 
+### Product Memory — implemented (Step 8)
+
+As built in migration 0004 (sections below are the original design sketch):
+
+- **knowledge_document**: `id`, `source_type` (`repo_document` | `ui_spec` | `system_generated`), `source_key` (e.g. `docs/MUTATION_SAFETY.md`), `title`, `content_hash` (sha256 of normalised content), `chunker` (e.g. `markdown-sections:v1:2000`), `embedding_model` (e.g. `hashing-bow:v1:384`), `metadata`, `created_at`, `updated_at`. **UNIQUE(source_type, source_key)** — one row per source; unchanged hash + chunker + model means nothing is re-done.
+- **knowledge_chunk**: `id` (UUID5 of source, position, text hash), `document_id` (FK, ON DELETE CASCADE), `chunk_index`, `section` (heading path), `text`, `text_hash`, `char_count` (characters, not tokens), `embedding vector(384)`, `metadata` (source, section, generation for UI Specs), `created_at`. **UNIQUE(document_id, chunk_index)**. Chunks are derived data: replaced in the same transaction when the document changes, so stale chunks are never retrievable.
+- **retrieval_run**: `id`, `query`, `top_k` (1–50), `filters`, `results` (`[{rank, chunk_id, source_key, section, score}]` — no chunk text), `embedding_model`, `latency_ms`, `created_at`. No FK to chunks: runs outlive re-ingestion and keep source/section for traceability.
+
 ### KnowledgeDocument
 
 A source document ingested into Product Memory.

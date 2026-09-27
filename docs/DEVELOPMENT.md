@@ -1,6 +1,6 @@
 # DarwinUX — Development Environment
 
-> **Status (Step 7):** a Next.js demo app (`/demo`, Generation 0) rendered from a validated UI Spec, with a browser telemetry SDK; the FastAPI *producer*; a separate worker (*consumer*) connected by a durable PostgreSQL-backed queue; deterministic behaviour signals; PostgreSQL 17 (`user_event`, `behavior_signal`, `queue_message`); backend and frontend tests. No Docker, no AWS, no AI components yet.
+> **Status (Step 8):** Product Memory (retrieval only: allowlisted docs → chunks → embeddings in pgvector → filtered vector search → golden-set evaluation); a Next.js demo app (`/demo`, Generation 0) rendered from a validated UI Spec, with a browser telemetry SDK; the FastAPI *producer*; a separate worker (*consumer*) connected by a durable PostgreSQL-backed queue; deterministic behaviour signals; PostgreSQL 17 (`user_event`, `behavior_signal`, `queue_message`); backend and frontend tests. No Docker, no AWS, no LLM calls yet.
 
 ## 1. Prerequisites
 
@@ -109,7 +109,7 @@ DarwinUX's only local service today is **PostgreSQL 17, installed with Homebrew*
 
 | Service | Local | AWS equivalent |
 |---|---|---|
-| PostgreSQL 17 (+ pgvector files, extension not enabled) | Homebrew `postgresql@17` on `localhost:5432` | RDS for PostgreSQL 17 |
+| PostgreSQL 17 + pgvector (`vector` enabled by `make db-setup`) | Homebrew `postgresql@17` on `localhost:5432` | RDS for PostgreSQL 17 |
 | Queue (later) | Decided when the telemetry pipeline needs one (OPEN_QUESTIONS.md N4) | SQS |
 | Trace viewer (later) | Decided when OpenTelemetry is added | CloudWatch / X-Ray |
 
@@ -151,6 +151,9 @@ A small root `Makefile` wraps the real commands. It only delegates to uv — uv 
 | `make migration-status` | `alembic current --verbose` | Which revision is `darwin_dev` at? |
 | `make migrate-sql` | `alembic upgrade head --sql` | Print the DDL without a database |
 | `make test-integration` | `pytest -m integration` | Integration tests against `darwin_test` (needs PostgreSQL 17) |
+| `make memory-ingest` | `python -m darwin.memory.ingest` | Ingest the allowlisted corpus into `darwin_dev` (idempotent: unchanged documents are skipped). `--config small\|standard\|large` |
+| `make memory-query Q="…"` | `python -m darwin.memory.retrieval "…"` | Top-5 chunks for a query, with sources and scores; records a `retrieval_run` |
+| `make memory-eval` | `python -m darwin.memory.evaluation` | Golden retrieval eval (P@5, R@5, MRR) for each chunking config, in rolled-back transactions; writes `artifacts/retrieval-eval.json` (git-ignored) |
 
 Without make, run the same commands from `backend/`, e.g.:
 
@@ -217,7 +220,8 @@ nvm alias default 24
 |---|---|---|
 | Docker / Compose for local development | Not planned | Native Homebrew PostgreSQL is simpler for one developer |
 | Queue, trace viewer | Later steps | Nothing uses them yet |
-| `CREATE EXTENSION vector`, vector columns | RAG step | pgvector is installed but not enabled until retrieval exists |
+| A real embedding model / provider credentials | When chosen (OPEN_QUESTIONS.md N3) | The hashing baseline is deterministic and offline; a real model must beat it on the golden set |
+| HNSW vector index | Larger corpus | Exact search over ~120 chunks is fast and has perfect recall |
 | Dockerfile for the app | Later step | Running on the host is faster to iterate on |
 | Evolution Lab (`/lab`), synthetic user simulator | Later steps | Demo surface and telemetry come first |
 | Tailwind, UI component libraries, state/data-fetching libraries | Not planned for the demo | CSS custom properties are the design tokens; `fetch` is enough |
@@ -254,6 +258,13 @@ backend/src/darwin/
 │   ├── schemas.py     # TelemetryEvent (request), IngestionResult (response)
 │   ├── messages.py    # TelemetryMessageV1: the versioned queue message
 │   └── service.py     # enqueue_event() (producer); ingest_event(), process_telemetry_message() (consumer)
+├── memory/            # Product Memory (retrieval only; no LLM)
+│   ├── corpus.py      # the allowlist, safe loading, normalisation
+│   ├── chunking.py    # deterministic markdown / UI Spec chunking + configs
+│   ├── embeddings.py  # EmbeddingProvider port + HashingEmbeddingProvider
+│   ├── ingest.py      # idempotent ingestion (make memory-ingest)
+│   ├── retrieval.py   # filtered vector search, retrieval runs, ContextBundle
+│   └── evaluation.py  # golden-set P@K / R@K / MRR (make memory-eval)
 ├── signals/
 │   ├── detectors.py   # pure detector functions, thresholds, signal_id derivation
 │   └── service.py     # window query + idempotent BehaviorSignal persistence
@@ -437,9 +448,9 @@ A lighter option that keeps the database but drops DarwinUX's tables: `cd backen
 
 Deleting the PostgreSQL 17 data directory (`$(brew --prefix)/var/postgresql@17`) would destroy every database on that server, for every project — never do this to reset DarwinUX.
 
-### pgvector (later)
+### pgvector
 
-`pgvector` is installed for PostgreSQL 17 but **not enabled**: no `CREATE EXTENSION`, no vector columns. `make db-status` shows it is available. The RAG step will enable it in a migration.
+`vector` is not a *trusted* extension, so the non-superuser `darwin` role cannot create it. `make db-setup` (run as your superuser) enables it in `darwin_dev` and `darwin_test`; migration 0004 then only asserts it and creates `knowledge_document`, `knowledge_chunk` (`vector(384)`) and `retrieval_run`. If you created the databases before Step 8, run `make db-setup` once more, then `make migrate`. Downgrading 0004 leaves the extension installed. On AWS, `rds_superuser` enables it. See RAG_ARCHITECTURE.md, "Current Implementation (Step 8)".
 
 ---
 

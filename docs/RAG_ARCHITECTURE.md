@@ -6,6 +6,59 @@ Product Memory is DarwinUX's knowledge base — the accumulated understanding of
 
 Without Product Memory, agents would operate on behavioral signals alone — like a doctor diagnosing a patient without access to medical history, guidelines, or research literature. RAG turns "we see friction" into "we see friction, and here's what the design system says about this component, here's what happened last time we changed it, and here's the UX guideline that applies."
 
+## Current Implementation (Step 8)
+
+Everything below this section is the design. This section is what exists today — **retrieval only**: no LLM call, no prompt, no agent, no reranker.
+
+```
+allowlisted corpus (darwin/memory/corpus.py)
+  → load (read only allowlisted files under the repo root; ≤ 512 KiB)
+  → normalise (NFC, \n line endings, no trailing spaces, ≤ 1 blank line)
+  → hash (sha256 of normalised content)
+  → chunk (deterministic; darwin/memory/chunking.py)
+  → embed (EmbeddingProvider port; darwin/memory/embeddings.py)
+  → persist (knowledge_document + knowledge_chunk, pgvector)        make memory-ingest
+
+query → embed → SQL: ORDER BY embedding <=> :query (cosine), WHERE filters, LIMIT k
+      → RetrievedChunk[] (rank, source, section, text, score)
+      → ContextBundle (items marked trust="untrusted")               make memory-query Q="…"
+
+golden dataset → per chunking config, in a rolled-back transaction:
+      ingest → retrieve → Precision@K, Recall@K, MRR                  make memory-eval
+```
+
+**Corpus (explicit allowlist).** `docs/PRODUCT.md`, `docs/ARCHITECTURE.md`, `docs/MUTATION_SAFETY.md`, `docs/DATA_PIPELINES.md`, `docs/EVALUATION_STRATEGY.md`, `docs/AWS_ARCHITECTURE.md`, `frontend/src/ui-spec/generation-0.json`, plus one system-generated document, `signals/detector-definitions`, rendered from the live detector constants. Never read: `.env`, logs, `node_modules`, git history, tests and their fixtures (which contain fake secrets), anything a user typed. Paths that resolve outside the repo root are refused.
+
+**Loaders.** Plain Python — no LangChain. Markdown is read as text; the UI Spec JSON is parsed and described as readable text (it is data; it is never executed).
+
+**Chunking.** Markdown: split on headings (headings inside code fences are ignored), each chunk prefixed with its heading path (e.g. `Validation Pipeline > The Sandbox`); a section longer than the limit is split on paragraph boundaries, and a single huge paragraph on whitespace. No character overlap: the heading prefix gives each chunk its context, and overlap would blur the chunking comparison. UI Spec: one page-level chunk, then one chunk per spec section listing its components as lines — never arbitrary character cuts. Sizes are in **characters** (≈4 per English token); no model tokenizer is chosen, so token counts would be false precision. Configs: `small` 1000, **`standard` 2000 (default, ≈500 tokens — the 200–500-token target above)**, `large` 3000.
+
+**Embeddings.** Ingestion and retrieval depend only on the `EmbeddingProvider` port (`name`, `dimension`, `embed_texts`). The only implementation is `HashingEmbeddingProvider` (`hashing-bow:v1:384`): lowercase words minus stopwords, a tiny suffix stemmer, word bigrams, each hashed with blake2b into one of 384 signed buckets, log-tf weighted, L2-normalised. It is **not a semantic model** — no synonyms, no paraphrase understanding — but it is deterministic, offline, fast, and an honest baseline. No real provider, credential, or setting exists yet (OPEN_QUESTIONS.md N3).
+
+**Dimension.** Locked at **384** in migration 0004 (`vector(384)`). Every document records its `embedding_model`; a provider with another dimension needs a new migration plus a full re-embed — a deliberate, visible change, not a config flip.
+
+**pgvector.** Enabled in migration 0004 (`CREATE EXTENSION IF NOT EXISTS vector`). `vector` is not a trusted extension, so the non-superuser application role cannot create it; `make db-setup` (local superuser) and `rds_superuser` (AWS) enable it once. Search is **exact** (cosine distance `<=>`, sequential scan). **No HNSW yet:** with ~120 chunks exact search takes milliseconds and has perfect recall, which keeps evaluation unambiguous. Add HNSW when the corpus reaches tens of thousands of chunks or retrieval latency matters — and then measure its recall against exact search on the golden set.
+
+**Idempotency.** A document is identified by `(source_type, source_key)`. Same content hash + chunker + embedding model ⇒ nothing happens (no re-chunk, no re-embed). Anything changed ⇒ its chunks are rebuilt and the old ones deleted in the same transaction, so a stale chunk is never retrievable. Documents that leave the allowlist are pruned (chunks cascade). Chunk ids are UUID5s of source, position and text hash.
+
+**Filters** (`source_type`, `source_key`, `generation`) are SQL predicates in the vector query — never client-side filtering. Ties are ordered by `(distance, source_key, chunk_index)`.
+
+**Retrieval runs.** `retrieve(..., record=True)` (the CLI) stores query, k, filters, `[{rank, chunk_id, source_key, section, score}]`, embedding model and latency — no chunk text, no reasoning.
+
+**Evaluation.** 26-query golden set (`backend/tests/evals/golden/retrieval.json`), Precision@5 / Recall@5 / MRR, reported per chunking config (see EVALUATION_STRATEGY.md). Current baseline with the hashing provider:
+
+| config | max chars | chunks | P@5 | R@5 | MRR |
+|---|---|---|---|---|---|
+| small | 1000 | 184 | 0.538 | 0.865 | 0.638 |
+| standard | 2000 | 123 | 0.477 | 0.923 | 0.684 |
+| large | 3000 | 114 | 0.485 | 0.923 | 0.667 |
+
+Smaller chunks raise precision (more, narrower chunks from the right document) but lower recall and MRR (a multi-source question fills the top 5 with near-duplicates). The misses are paraphrases the hashing provider cannot bridge ("undo a change" vs. "rollback"; "where credentials are kept" vs. "Secrets Manager") — the gap a real embedding model is expected to close, now measurable.
+
+**Untrusted context.** Retrieved text is data from documents, never instructions: `ContextBundle` items carry `trust = "untrusted"`, and a document saying "ignore previous instructions" is stored and returned verbatim like any other text (tested). When LLM steps arrive, retrieved text must stay inside a clearly delimited data section of the prompt, and constraints must come from code/registry, never from retrieved text.
+
+**Not built yet (future):** a real embedding provider; reranking; query reformulation; HNSW; using context in LLM calls; the Research agent; online/production retrieval evaluation; LLM-judged context relevance and groundedness; ingestion of experiment reports and generation history.
+
 ## Knowledge Sources
 
 | Source Type | Examples | Update Frequency |

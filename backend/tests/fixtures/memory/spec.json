@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "generation": 7,
+  "page": {
+    "id": "fixture_page",
+    "title": "Fixture page",
+    "sections": [
+      {
+        "id": "intro",
+        "spacing": "md",
+        "visibility": "always",
+        "components": [
+          { "type": "heading", "id": "intro_heading", "level": 1, "text": "Telescope checkout" },
+          { "type": "text", "id": "intro_text", "text": "Buy a telescope for stargazing.", "emphasis": "normal" }
+        ]
+      }
+    ]
+  }
+}

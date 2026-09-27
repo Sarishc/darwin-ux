@@ -12,7 +12,9 @@ It is not a chatbot wrapper. It is a closed-loop system where software evolves t
 
 ## Status
 
-**Step 7 — Generation 0 Demo App + Telemetry SDK** (Steps 0–6 complete)
+**Step 8 — Product Memory / RAG Foundation** (Steps 0–7 complete)
+
+Retrieval-only Product Memory: an allowlisted corpus of DarwinUX docs and the Generation 0 UI Spec, chunked deterministically, embedded through a provider port (a deterministic hashing baseline — no real model yet), stored in PostgreSQL + pgvector, retrieved by exact cosine search with SQL filters, and measured on a 26-query golden set (Precision@K, Recall@K, MRR) across chunking configs. No LLM calls.
 
 A Next.js demo app (`/demo`) rendered from a validated, data-only **Generation 0 UI Spec** through an allowlisted component registry, with deliberate UX friction and a small browser telemetry SDK. Behind it: a FastAPI producer that validates telemetry and durably queues it (`POST /api/v1/telemetry/events` → 202), a separate worker process that stores events idempotently and reconciles deterministic behaviour signals (`rage_click`, `error_burst`), a PostgreSQL-backed local queue with leases, retries and dead-lettering, settings, structured logging, and a PostgreSQL 17 persistence layer (SQLAlchemy + Alembic). Local PostgreSQL runs natively via Homebrew — no Docker. No AI components yet. To set up a machine and run it, see [DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
@@ -22,6 +24,7 @@ make api    # terminal 1 — http://127.0.0.1:8000/api/v1/health/live
 make worker # terminal 2 — processes queued telemetry
 make web    # terminal 3 — http://localhost:3000/demo (first: make web-install)
 make web-check  # frontend lint, type check, tests, production build
+make memory-ingest && make memory-eval   # Product Memory: ingest corpus, evaluate retrieval
 make check  # format check, lint, type check, unit tests
 make db-start && make db-setup && make migrate   # local PostgreSQL 17
 make test-integration

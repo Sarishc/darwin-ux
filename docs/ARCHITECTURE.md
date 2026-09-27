@@ -363,7 +363,8 @@ darwin-ux/
 │   │       ├── queue/             # MessageQueue port + local PostgreSQL implementation (SQS adapter later)
 │   │       ├── services/          # Application services, workflows, state transitions
 │   │       ├── domain/            # Pure Pydantic models, enums, transition rules
-│   │       ├── ai/                # LangGraph graph, prompts, RAG retrieval
+│   │       ├── memory/            # Product Memory: corpus, chunking, embeddings, retrieval, evaluation (Step 8)
+│   │       ├── ai/                # LangGraph graph, prompts (later)
 │   │       ├── evaluation/        # Evaluation engine, metrics, judges
 │   │       ├── pipelines/         # Telemetry & ingestion processing logic
 │   │       ├── mutation/          # UI Spec, component registry, MutationSpec validation

@@ -13,7 +13,8 @@ PG_LOG = $(shell brew --prefix)/var/log/$(PG_FORMULA).log
 
 .PHONY: help sync api worker web web-install web-check test lint format typecheck check \
 	db-start db-stop db-status db-logs db-setup \
-	migrate migration-status migrate-sql queue-status test-integration
+	migrate migration-status migrate-sql queue-status test-integration \
+	memory-ingest memory-query memory-eval
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-17s %s\n", $$1, $$2}'
@@ -85,6 +86,17 @@ migrate-sql: ## Print the SQL the migrations would run (no database needed)
 
 queue-status: ## Read-only queue counts (never message bodies)
 	$(BACKEND) uv run $(ENV_FILE) python -m darwin.queue.status
+
+# ---- Product Memory (retrieval only; deterministic hashing embeddings) -------
+
+memory-ingest: ## Ingest the allowlisted corpus into DARWIN_DATABASE_URL (idempotent)
+	$(BACKEND) uv run $(ENV_FILE) python -m darwin.memory.ingest
+
+memory-query: ## Retrieve chunks for Q="your question" (records a retrieval_run)
+	$(BACKEND) uv run $(ENV_FILE) python -m darwin.memory.retrieval "$(Q)"
+
+memory-eval: ## Golden-set retrieval eval for small/standard/large chunking (rolled back)
+	$(BACKEND) uv run $(ENV_FILE) python -m darwin.memory.evaluation
 
 test-integration: ## Integration tests against local darwin_test (needs PostgreSQL 17)
 	$(BACKEND) uv run $(ENV_FILE) pytest -m integration
