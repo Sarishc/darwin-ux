@@ -11,10 +11,11 @@ No ``.env`` file is read here: loading one is the launcher's job
 local files.
 """
 
-from typing import Literal
+from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, PostgresDsn, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 Environment = Literal["local", "test", "dev", "prod"]
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
@@ -24,6 +25,9 @@ LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 # always set DARWIN_DATABASE_URL; on AWS it comes from Secrets Manager.
 DEFAULT_DATABASE_URL = "postgresql+psycopg://darwin@localhost:5432/darwin_dev"
 REQUIRED_DRIVER_SCHEME = "postgresql+psycopg"
+
+# Browser origins allowed to call the API (the Next.js dev server, Step 7).
+DEFAULT_CORS_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
 
 class Settings(BaseSettings):
@@ -53,11 +57,39 @@ class Settings(BaseSettings):
     # How long an idle worker sleeps before polling again.
     worker_poll_interval_seconds: float = Field(default=1.0, gt=0)
 
+    # Explicit browser origins for CORS: DARWIN_CORS_ORIGINS=a,b (comma-separated).
+    # Never "*". An empty value means "use the local defaults".
+    cors_origins: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: list(DEFAULT_CORS_ORIGINS)
+    )
+
     @field_validator("log_level", mode="before")
     @classmethod
     def _normalise_log_level(cls, value: object) -> object:
         # Accept DARWIN_LOG_LEVEL=debug as well as DEBUG.
         return value.upper() if isinstance(value, str) else value
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _split_origins(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
+
+    @field_validator("cors_origins")
+    @classmethod
+    def _require_exact_origins(cls, origins: list[str]) -> list[str]:
+        # An origin is scheme://host[:port] — no wildcard, path, query, or trailing slash.
+        for origin in origins:
+            parts = urlsplit(origin)
+            if (
+                "*" in origin
+                or parts.scheme not in ("http", "https")
+                or not parts.netloc
+                or origin != f"{parts.scheme}://{parts.netloc}"
+            ):
+                raise ValueError(f"invalid CORS origin: {origin!r} (use scheme://host[:port])")
+        return origins
 
     @field_validator("database_url")
     @classmethod

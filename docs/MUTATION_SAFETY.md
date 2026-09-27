@@ -50,6 +50,16 @@ graph LR
     SPEC --> PATCH --> CAND --> FLAG
 ```
 
+### What exists today (Step 7)
+
+The mutation surface above now has a concrete base:
+
+- **UI Spec v1** (`frontend/src/ui-spec/schema.ts`, Zod): every object is `.strict()` — unknown keys such as `onClick`, `html`, `style`, `className`, `href`, `src` are rejected, not ignored. Visual and behavioural properties are closed token enums (`spacing: sm|md|lg`, `variant: primary|secondary`, `emphasis`, `tone`, `feedback: immediate|delayed`, `validation: on_submit|inline`, `error_display: summary|per_field`). Text is length-bounded plain text. Buttons name an allowlisted `action` (`reveal_signup`); the handler lives in code. Ids are unique, snake_case, and double as telemetry component ids.
+- **Component registry** (`frontend/src/components/registry.tsx`): an exhaustive, typed map from the six spec types (`heading`, `text`, `notice`, `button`, `plan_grid`, `signup_form`) to React renderers. Anything else — including prototype names like `constructor` — throws `UnknownComponentError`. Text is rendered as React text nodes, so markup in a string renders as literal text.
+- **Generation 0** (`frontend/src/ui-spec/generation-0.json`): committed, validated at build time, and guarded by a SHA-256 test so it is never edited in place. Later generations are new files.
+
+A future MutationSpec patches values in such a document (e.g. `feedback: delayed → immediate`); the result must re-validate against the same schema before it can render. The frontend schema is the rendering-side guard; the server-side MutationSpec validator will be added with mutations.
+
 ### Mutation Types (v1)
 
 | Type | Example | Bounded by |

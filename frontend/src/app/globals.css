@@ -1,0 +1,208 @@
+/*
+ * DarwinUX demo styles. The UI Spec never contains CSS: it picks token
+ * *names* (space-md, variant-primary, emphasis-strong, ...) and these classes
+ * give them meaning. Changing a token value here changes every use of it.
+ */
+
+:root {
+  /* spacing tokens */
+  --space-sm: 0.75rem;
+  --space-md: 1.5rem;
+  --space-lg: 3rem;
+
+  /* colour tokens (WCAG AA contrast against their backgrounds) */
+  --color-bg: #f7f7f8;
+  --color-surface: #ffffff;
+  --color-text: #1b1d22;
+  --color-muted: #4a4f59;
+  --color-border: #d9dbe0;
+  --color-primary: #3b3fd8;
+  --color-primary-hover: #2f32b3;
+  --color-on-primary: #ffffff;
+  --color-info-bg: #eef1fd;
+  --color-warning-bg: #fff4e5;
+  --color-warning-text: #7a3e00;
+  --color-focus: #f5a623;
+
+  --radius: 10px;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font);
+  line-height: 1.5;
+}
+
+a {
+  color: var(--color-primary);
+}
+
+:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.spec-page {
+  max-width: 64rem;
+  margin: 0 auto;
+  padding: var(--space-md);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+}
+.space-sm {
+  gap: var(--space-sm);
+  padding-block: var(--space-sm);
+}
+.space-md {
+  gap: var(--space-md);
+  padding-block: var(--space-md);
+}
+.space-lg {
+  gap: var(--space-md);
+  padding-block: var(--space-lg);
+}
+
+h1 {
+  font-size: 2.25rem;
+  line-height: 1.2;
+  margin: 0;
+}
+h2 {
+  font-size: 1.5rem;
+  margin: 0;
+}
+h3 {
+  font-size: 1.15rem;
+  margin: 0;
+}
+
+.text {
+  margin: 0;
+  color: var(--color-muted);
+}
+.emphasis-strong {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.notice {
+  margin: 0;
+  padding: var(--space-sm);
+  border-radius: var(--radius);
+}
+.tone-info {
+  background: var(--color-info-bg);
+}
+.tone-warning {
+  background: var(--color-warning-bg);
+  color: var(--color-warning-text);
+}
+
+.button {
+  font: inherit;
+  font-weight: 600;
+  padding: 0.6rem 1.1rem;
+  border-radius: var(--radius);
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.variant-primary {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+}
+.variant-primary:hover {
+  background: var(--color-primary-hover);
+}
+.variant-secondary {
+  background: var(--color-surface);
+  color: var(--color-primary);
+  border-color: var(--color-border);
+}
+.variant-secondary:hover {
+  border-color: var(--color-primary);
+}
+
+.plan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+}
+.gap-sm {
+  gap: var(--space-sm);
+}
+.gap-md {
+  gap: var(--space-md);
+}
+.gap-lg {
+  gap: var(--space-lg);
+}
+
+.plan-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+.plan-card.highlighted {
+  border: 2px solid var(--color-primary);
+}
+.plan-card ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  flex: 1;
+  color: var(--color-muted);
+}
+.price {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.signup-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  max-width: 28rem;
+  padding: var(--space-md);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.field label {
+  font-weight: 600;
+}
+.field input {
+  font: inherit;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+.field-error {
+  margin: 0;
+  color: var(--color-warning-text);
+  font-size: 0.9rem;
+}
+
+.generation-badge {
+  margin-top: var(--space-lg);
+  color: var(--color-muted);
+  font-size: 0.85rem;
+}

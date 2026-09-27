@@ -59,6 +59,8 @@ graph TB
     MGMT_API -->|document upload| S3 --> RAG_PIPE --> PG
 ```
 
+**Built so far (Step 7):** only `/demo` — the Generation 0 target app — plus a landing page at `/`. `/lab` does not exist yet. The demo renders from a validated UI Spec (`frontend/src/ui-spec/generation-0.json`) through an allowlisted component registry, and its browser telemetry SDK posts to the API, which queues events for the worker.
+
 The diagram shows **logical components**, not services. There are three deployables (the Next.js app, the FastAPI app, and the Python workers — which share one codebase and one Docker image). See "Modular Monolith" below.
 ### Why This Shape
 
@@ -376,7 +378,10 @@ darwin-ux/
 │   ├── Dockerfile
 │   └── alembic/                   # Database migrations (future)
 │
-├── frontend/                      # Next.js: Evolution Lab (/lab) + demo target app (/demo)
+├── frontend/                      # Next.js: demo target app (/demo, Step 7); Evolution Lab (/lab) later
+│   ├── src/ui-spec/               # UI Spec schema (Zod) + committed, immutable generation-N.json
+│   ├── src/components/            # Component registry: the only spec -> React path
+│   └── src/lib/telemetry/         # Browser telemetry SDK
 │   ├── package.json
 │   ├── src/
 │   │   ├── app/

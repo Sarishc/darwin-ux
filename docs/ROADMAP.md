@@ -52,10 +52,10 @@ Documents in `docs/`. No code, no dependencies, no infrastructure.
 
 Prerequisites: the persistence foundation (Step 2c), CI running `make check`, and minimal OpenTelemetry. `BehaviorSignal` is introduced here, together with the behaviour that uses it.
 
-- Demo target app (Next.js `/demo`) rendering from a seeded **UI Spec** via a component registry — Generation 0, with deliberate friction.
+- ✅ Demo target app (Next.js `/demo`) rendering from a validated, data-only **UI Spec** via an allowlisted component registry — Generation 0, with three documented friction points (built as "Step 7").
 - ✅ `POST /api/v1/telemetry/events` (202), validated `TelemetryEvent`, idempotent synchronous persistence (built as "Step 4").
 - ✅ Ingestion behind a durable queue → separate telemetry worker, at-least-once with leases, retries and dead-lettering; local PostgreSQL-backed queue behind a `MessageQueue` port (built as "Step 6"; SQS adapter later). Endpoint contract unchanged.
-- Telemetry SDK.
+- ✅ Browser telemetry SDK (session-scoped anonymous id, typed payloads, fire-and-forget) and explicit backend CORS (built as "Step 7").
 - ✅ Windowed deterministic signal detectors (`rage_click`, `error_burst`) with replay-safe `BehaviorSignal` persistence (built as "Step 5"). Deferred: abandonment, confusion loop.
 - ✅ DLQ equivalent (`status = dead`, built with the queue in "Step 6").
 - First version of the synthetic user simulator.

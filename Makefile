@@ -11,7 +11,7 @@ PG_FORMULA := postgresql@17
 PG_BIN = $(shell brew --prefix $(PG_FORMULA))/bin
 PG_LOG = $(shell brew --prefix)/var/log/$(PG_FORMULA).log
 
-.PHONY: help sync api worker test lint format typecheck check \
+.PHONY: help sync api worker web web-install web-check test lint format typecheck check \
 	db-start db-stop db-status db-logs db-setup \
 	migrate migration-status migrate-sql queue-status test-integration
 
@@ -26,6 +26,15 @@ api: ## Run the API (producer) with auto-reload on http://127.0.0.1:8000
 
 worker: ## Run the telemetry worker (consumer); Ctrl-C stops it gracefully
 	$(BACKEND) uv run $(ENV_FILE) python -m darwin.worker
+
+web-install: ## Install locked frontend dependencies (npm ci)
+	cd frontend && npm ci
+
+web: ## Run the Next.js frontend (demo at http://localhost:3000/demo)
+	cd frontend && npm run dev
+
+web-check: ## Frontend gate: lint, type check, tests, production build
+	cd frontend && npm run lint && npm run typecheck && npm test && npm run build
 
 test: ## Run the unit tests (no database needed)
 	$(BACKEND) uv run pytest

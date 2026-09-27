@@ -1,6 +1,6 @@
 # DarwinUX — Development Environment
 
-> **Status (Step 6):** FastAPI application (the telemetry *producer*) and a separate worker process (the *consumer*) connected by a durable PostgreSQL-backed queue; idempotent event storage and deterministic behaviour-signal reconciliation run in the worker. Settings, structured logging, PostgreSQL 17 (SQLAlchemy + Alembic: `user_event`, `behavior_signal`, `queue_message`), unit and integration tests. No Docker, no AWS, no AI components yet.
+> **Status (Step 7):** a Next.js demo app (`/demo`, Generation 0) rendered from a validated UI Spec, with a browser telemetry SDK; the FastAPI *producer*; a separate worker (*consumer*) connected by a durable PostgreSQL-backed queue; deterministic behaviour signals; PostgreSQL 17 (`user_event`, `behavior_signal`, `queue_message`); backend and frontend tests. No Docker, no AWS, no AI components yet.
 
 ## 1. Prerequisites
 
@@ -10,7 +10,7 @@
 | Git | 2.40+ | Version control | `git --version` |
 | Python | **3.13.x** | Backend, workers, AI subsystems | `python3.13 --version` |
 | uv | recent release | Python versions, virtual env, dependencies, lockfile | `uv --version` |
-| Node.js | **24.x (LTS)** | Future Next.js frontend | `node --version` |
+| Node.js | **24.x (LTS)** | Next.js frontend (`frontend/`) | `node --version` |
 | npm | ships with Node 24 | Future frontend dependencies | `npm --version` |
 | Homebrew | recent | Installs PostgreSQL 17 + pgvector | `brew --version` |
 | PostgreSQL | **17.x** (Homebrew `postgresql@17`) + `pgvector` | Local database (native, no containers) | `make db-status` |
@@ -134,6 +134,9 @@ A small root `Makefile` wraps the real commands. It only delegates to uv — uv 
 | `make sync` | `uv sync` | Install/refresh dependencies from `uv.lock` |
 | `make api` | `uv run [--env-file ../.env] uvicorn darwin.main:app --reload` | Start the API (producer) on http://127.0.0.1:8000 with auto-reload |
 | `make worker` | `uv run [--env-file ../.env] python -m darwin.worker` | Start the telemetry worker (consumer). Ctrl-C / SIGTERM stops it after the current message |
+| `make web-install` | `cd frontend && npm ci` | Install the locked frontend dependencies |
+| `make web` | `cd frontend && npm run dev` | Next.js dev server on http://localhost:3000 (demo: `/demo`) |
+| `make web-check` | lint + typecheck + test + build (frontend) | Frontend gate; independent of `make check` (backend) |
 | `make queue-status` | `python -m darwin.queue.status` | Read-only queue counts (pending / leased / delayed / done / dead), oldest pending age, dead-letter reasons. Never message bodies |
 | `make test` | `uv run pytest` | Run the unit tests (no database) |
 | `make lint` | `uv run ruff check .` | Lint |
@@ -216,7 +219,9 @@ nvm alias default 24
 | Queue, trace viewer | Later steps | Nothing uses them yet |
 | `CREATE EXTENSION vector`, vector columns | RAG step | pgvector is installed but not enabled until retrieval exists |
 | Dockerfile for the app | Later step | Running on the host is faster to iterate on |
-| Next.js, `package.json`, `node_modules` | Step 2 (demo app) / 7 | Frontend not started |
+| Evolution Lab (`/lab`), synthetic user simulator | Later steps | Demo surface and telemetry come first |
+| Tailwind, UI component libraries, state/data-fetching libraries | Not planned for the demo | CSS custom properties are the design tokens; `fetch` is enough |
+| Playwright / browser E2E automation | Later (sandbox rendering, simulator) | Step 7 was verified manually in a browser |
 | GitHub Actions | Later step | `make check` is the same gate, run locally |
 | Terraform, AWS | Step 9 | Local-first |
 | OpenTelemetry SDK | Later step | Structured logs are enough for one process |
@@ -613,6 +618,91 @@ psql -h localhost -U darwin -d darwin_dev -c "SELECT status, attempts, visible_a
 Dead-lettered messages stay in the table (with their body) for inspection. Re-sending the same event through the API re-queues a dead message with a fresh attempt budget. There is deliberately no destructive "drain/purge" command.
 
 Tests: `make test-integration` runs `tests/integration/test_queue.py` (enqueue idempotency, leases, stale receipts, retry, dead-letter, concurrent claims, SKIP LOCKED), `test_async_pipeline.py` (HTTP → queue → worker, crash recovery, retries to dead, out-of-order convergence) and `test_worker_process.py` (the real `python -m darwin.worker` process shuts down on SIGTERM/SIGINT). The integration `api` fixture drains the queue after every POST so earlier tests keep checking processed results; the `producer` + `drain` fixtures make the asynchrony explicit.
+
+---
+
+## 16. Frontend: Generation 0 Demo and Telemetry SDK
+
+### Stack
+
+- **Next.js 16.3.6** (App Router, TypeScript, ESLint), **React 19.2.8**, in `frontend/`.
+- **npm** is the frontend package manager (one lockfile: `frontend/package-lock.json`). Node 24 (`.nvmrc`, `engines`).
+- Runtime dependency added beyond Next/React: **zod** — runtime validation of UI Specs, which will eventually come from AI-proposed mutations. Dev: **vitest**, **jsdom**, **@testing-library/react** + **@testing-library/dom** (component and SDK tests).
+- No Tailwind or component library: design tokens are CSS custom properties in `src/app/globals.css`, selected by name from the spec.
+
+### Setup (once)
+
+```bash
+make web-install
+```
+
+```bash
+cp frontend/.env.example frontend/.env.local
+```
+
+`frontend/.env.local` (git-ignored) sets `NEXT_PUBLIC_DARWIN_API_BASE_URL=http://127.0.0.1:8000`. It is public by definition (inlined into the browser bundle) — never put a secret in a `NEXT_PUBLIC_*` variable. Without it, telemetry is simply disabled.
+
+### The full local stack — three terminals
+
+PostgreSQL 17 runs as a Homebrew service (`make db-start`).
+
+| Terminal | Command | Serves |
+|---|---|---|
+| 1 | `make api` | API (producer) on http://127.0.0.1:8000 |
+| 2 | `make worker` | Worker (consumer) |
+| 3 | `make web` | Next.js on http://localhost:3000 — open http://localhost:3000/demo |
+
+The API accepts browser requests only from `DARWIN_CORS_ORIGINS` (default `http://localhost:3000,http://127.0.0.1:3000`; never `*`, never credentials). Serving the frontend elsewhere means adding that exact origin.
+
+Flow: browser SDK → `POST /api/v1/telemetry/events` (202, queued) → queue → worker → `user_event` → reconciled `behavior_signal`.
+
+### Generation 0: the product and its deliberate friction
+
+A fictional "Notewise" pricing page: pick one of three plans, then create a team workspace (local only — no account is created, nothing typed is sent anywhere).
+
+| # | Friction (deliberate, documented) | In the spec | Expected behaviour / telemetry |
+|---|---|---|---|
+| 1 | The recommended plan's **"Get started"** button gives **no feedback for 1.5 s** (no spinner, no disabled state); extra clicks are silently ignored | `plan_team_pro_cta.feedback = "delayed"` | Repeated clicks → `button_click` × N → **`rage_click`** (4 in 2 s) |
+| 2 | **Ambiguous plan naming**: "Team" vs "Team Pro" differ only by "Workspace controls" vs "Advanced workspace controls" | plan `name` / `features` text | Hesitation and switching between plan CTAs (`button_click`); no detector yet |
+| 3 | The form validates **only on submit** and shows **one vague summary** ("Some details are missing or invalid.") instead of per-field help | `validation = "on_submit"`, `error_display = "summary"` | Retried submits → `form_error` per invalid field → **`error_burst`** (3 in 10 s) |
+
+Accessibility is not part of the friction: real `<button>`s, labelled inputs, semantic headings, visible focus, AA contrast.
+
+### Triggering signals by hand
+
+With all three terminals running, on http://localhost:3000/demo:
+
+- **rage_click:** click "Get started" four or more times quickly (within 2 s).
+- **error_burst:** after the form appears, type something that is not an email, leave "Team name" empty, and click "Create workspace" twice (4 `form_error` events within 10 s).
+
+Then:
+
+```bash
+make queue-status
+```
+
+```bash
+psql -h localhost -U darwin -d darwin_dev -c "SELECT signal_type, evidence->>'count' AS count, evidence->>'component' AS component, detected_at FROM behavior_signal WHERE superseded_at IS NULL ORDER BY detected_at DESC LIMIT 5;"
+```
+
+### Telemetry SDK essentials
+
+`frontend/src/lib/telemetry/`: anonymous `session_id` in `sessionStorage` only; fresh `event_id` per interaction; `occurred_at` in UTC; typed payloads (`page_view {page}`, `button_click {component}`, `form_error {component, field, reason}`, all with `generation`); `track()` never throws or rejects, no retries. The backend remains the authority for every rule the SDK mirrors. Details: DATA_PIPELINES.md, "Browser Telemetry SDK".
+
+### UI Spec and registry
+
+`src/ui-spec/schema.ts` (Zod, strict objects, token enums), `src/ui-spec/generation-0.json` (committed, never edited — a SHA-256 test enforces it), `src/components/registry.tsx` (the only path from spec to React; unknown types throw). See MUTATION_SAFETY.md, "What exists today".
+
+### Frontend tests
+
+`make web-check` (or `npm run lint`, `npm run typecheck`, `npm test`, `npm run build` in `frontend/`):
+
+| File | Covers |
+|---|---|
+| `src/ui-spec/schema.test.ts` | Generation 0 validates and is unchanged; unknown types, handlers, HTML, CSS, class names, script/link URLs, off-enum tokens, unimplemented actions, bad or duplicate ids, other versions are rejected |
+| `src/components/registry.test.tsx` | Exactly six allowlisted types; semantic rendering; markup renders as text; unknown/prototype types throw; field validation codes |
+| `src/lib/telemetry/client.test.ts` | Backend contract; fresh event ids; form_error payload shape; invalid ids dropped; POST without cookies; never rejects (network, 4xx, 5xx, throw); disabled without URL; session id stable, per-session, sessionStorage-only, tamper-safe, storage-failure fallback |
+| `src/components/SpecPage.test.tsx` | Renders from spec, generation 0; one page_view; delayed CTA timing and click telemetry; typed values never in events or request bodies; local completion; identical behaviour when telemetry fails; labels and real buttons |
 
 ---
 

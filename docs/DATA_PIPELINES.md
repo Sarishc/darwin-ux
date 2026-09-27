@@ -31,7 +31,8 @@ STEP 5 (previous) — synchronous: everything inside the HTTP request
 Client ──POST──> FastAPI ──> validate ──> INSERT user_event ──> reconcile signals ──> 202
 
 
-STEP 6 (current) — asynchronous: producer, durable queue, consumer
+STEP 6/7 (current) — asynchronous: producer, durable queue, consumer
+  Browser (Next.js /demo, telemetry SDK: frontend/src/lib/telemetry/) ──fire-and-forget POST──┐
 
   PRODUCER (API process)                         CONSUMER (worker process: make worker)
   ─────────────────────                          ──────────────────────────────────────
@@ -55,6 +56,17 @@ STEP 6 (current) — asynchronous: producer, durable queue, consumer
 - **Backpressure:** queue depth is the buffer. If the worker is slow or stopped, `pending` grows (`make queue-status`); nothing is lost and the API stays fast. There is no admission control yet.
 
 Not built yet: batching, the SDK, SQS, and the deferred detectors (below).
+
+### Browser Telemetry SDK (current, Step 7)
+
+The demo app (`frontend/`) is the first real producer of events. Its SDK is deliberately tiny:
+
+- **session_id:** one random UUID per browser tab session, in `sessionStorage` (`darwin.session_id`). It survives reloads within the tab and disappears with it; nothing goes to `localStorage` or cookies, so visits are never linked into a long-lived identity. If storage is blocked, an in-memory id is used.
+- **event_id:** a fresh `crypto.randomUUID()` per interaction (the backend's idempotency key). **occurred_at:** the browser clock, ISO 8601 UTC (`…Z`).
+- **Typed payloads only:** `page_view {page}`, `button_click {component}`, `form_error {component, field, reason}` — identifiers and small enums, plus `generation`. The SDK has no way to send free text; form values never leave the component that holds them.
+- **Failure semantics:** `track()` never throws and never rejects; the UI never awaits it. Network errors, 4xx/5xx and a missing `NEXT_PUBLIC_DARWIN_API_BASE_URL` all just drop the event (a `console.warn` in development only). No retries, no offline buffer.
+- **Transport:** `fetch` POST, `content-type: application/json`, `keepalive: true`, `credentials: "omit"`. The API allows exactly the configured origins (`DARWIN_CORS_ORIGINS`, default the local Next.js dev server) — never `*`, never credentials.
+- **Backend is the authority.** The SDK mirrors the event-type and component-id rules only to avoid sending obviously invalid events; the API still validates everything.
 
 ### Queue and Worker (current)
 

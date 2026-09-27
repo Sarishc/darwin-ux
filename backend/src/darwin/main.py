@@ -16,6 +16,7 @@ from datetime import timedelta
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import make_url
 
 from darwin import __version__
@@ -79,6 +80,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Becomes True when the lifespan startup has run; readiness depends on it.
     app.state.started = False
     app.add_exception_handler(RequestValidationError, validation_error_without_input)
+    # The browser demo (another origin) POSTs telemetry. Allow exactly the
+    # configured origins, only what telemetry needs, and never credentials.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_methods=["GET", "POST"],
+        allow_headers=["content-type"],
+        allow_credentials=False,
+        max_age=600,
+    )
     app.include_router(api_v1_router)
     return app
 

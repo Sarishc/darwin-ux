@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "generation": 0,
+  "page": {
+    "id": "pricing_signup",
+    "title": "Notewise — plans",
+    "sections": [
+      {
+        "id": "hero",
+        "spacing": "lg",
+        "visibility": "always",
+        "components": [
+          {
+            "type": "heading",
+            "id": "hero_heading",
+            "level": 1,
+            "text": "Shared notes for small teams"
+          },
+          {
+            "type": "text",
+            "id": "hero_subheading",
+            "text": "Pick a plan and create your team workspace in under a minute.",
+            "emphasis": "normal"
+          },
+          {
+            "type": "notice",
+            "id": "demo_notice",
+            "tone": "info",
+            "text": "This is a DarwinUX demo. No account is created and nothing you type leaves this page."
+          }
+        ]
+      },
+      {
+        "id": "plans",
+        "spacing": "md",
+        "visibility": "always",
+        "components": [
+          {
+            "type": "heading",
+            "id": "plans_heading",
+            "level": 2,
+            "text": "Plans"
+          },
+          {
+            "type": "plan_grid",
+            "id": "plan_grid",
+            "gap": "md",
+            "plans": [
+              {
+                "type": "plan_card",
+                "id": "plan_starter",
+                "name": "Starter",
+                "price_label": "Free",
+                "features": ["Up to 3 members", "100 notes", "Basic search"],
+                "highlighted": false,
+                "cta": {
+                  "type": "button",
+                  "id": "plan_starter_cta",
+                  "label": "Choose Starter",
+                  "variant": "secondary",
+                  "feedback": "immediate",
+                  "action": "reveal_signup"
+                }
+              },
+              {
+                "type": "plan_card",
+                "id": "plan_team",
+                "name": "Team",
+                "price_label": "$8 / member / month",
+                "features": ["Unlimited members", "Unlimited notes", "Full-text search", "Workspace controls"],
+                "highlighted": false,
+                "cta": {
+                  "type": "button",
+                  "id": "plan_team_cta",
+                  "label": "Choose Team",
+                  "variant": "secondary",
+                  "feedback": "immediate",
+                  "action": "reveal_signup"
+                }
+              },
+              {
+                "type": "plan_card",
+                "id": "plan_team_pro",
+                "name": "Team Pro",
+                "price_label": "$12 / member / month",
+                "features": ["Unlimited members", "Unlimited notes", "Full-text search", "Advanced workspace controls"],
+                "highlighted": true,
+                "cta": {
+                  "type": "button",
+                  "id": "plan_team_pro_cta",
+                  "label": "Get started",
+                  "variant": "primary",
+                  "feedback": "delayed",
+                  "action": "reveal_signup"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "signup",
+        "spacing": "md",
+        "visibility": "after_signup_reveal",
+        "components": [
+          {
+            "type": "signup_form",
+            "id": "signup_form",
+            "title": "Create your team workspace",
+            "fields": [
+              { "name": "email", "label": "Work email", "input": "email" },
+              { "name": "team_name", "label": "Team name", "input": "text" }
+            ],
+            "submit_label": "Create workspace",
+            "validation": "on_submit",
+            "error_display": "summary",
+            "summary_error_text": "Some details are missing or invalid.",
+            "completion_text": "Demo signup completed — no account was created."
+          }
+        ]
+      }
+    ]
+  }
+}
