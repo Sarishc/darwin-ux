@@ -94,7 +94,7 @@ DarwinUX starts as a **modular monolith**: one Python package (`darwin`) with st
 |---|---|---|
 | `web` (Next.js) | `next start` | Different language/runtime |
 | `api` (FastAPI) | `uvicorn darwin.api.main:app` | Must stay fast; serves humans and the telemetry SDK |
-| `worker` (same image as `api`) | `python -m darwin.workers <name>` | Long-running / queue-driven work must not share a process with request handling |
+| `worker` (same image as `api`) | `python -m darwin.worker` (today: the telemetry worker) | Long-running / queue-driven work must not share a process with request handling |
 
 Workers are *processes*, not *services*: they import the same domain models and repositories. A module gets extracted into its own service only when it needs a different runtime, scaling profile, or security boundary — not before.
 
@@ -357,7 +357,8 @@ darwin-ux/
 │   ├── src/
 │   │   └── darwin/
 │   │       ├── api/               # FastAPI routers, middleware, deps
-│   │       ├── workers/           # Worker entrypoints (telemetry, ingestion, investigation, experiments)
+│   │       ├── worker.py          # Telemetry worker entrypoint (more workers later: ingestion, investigation, experiments)
+│   │       ├── queue/             # MessageQueue port + local PostgreSQL implementation (SQS adapter later)
 │   │       ├── services/          # Application services, workflows, state transitions
 │   │       ├── domain/            # Pure Pydantic models, enums, transition rules
 │   │       ├── ai/                # LangGraph graph, prompts, RAG retrieval

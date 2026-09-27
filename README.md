@@ -12,13 +12,14 @@ It is not a chatbot wrapper. It is a closed-loop system where software evolves t
 
 ## Status
 
-**Step 5 — Behaviour Signal Detection** (Steps 0–4 complete)
+**Step 6 — Async Telemetry Queue + Worker** (Steps 0–5 complete)
 
-A FastAPI application with liveness/readiness endpoints, an idempotent telemetry ingestion endpoint (`POST /api/v1/telemetry/events`, synchronous — no queue yet), deterministic behaviour-signal detection (`rage_click`, `error_burst`), settings, structured logging, and a PostgreSQL 17 persistence layer (SQLAlchemy + Alembic). Local PostgreSQL runs natively via Homebrew — no Docker. No AI components yet. To set up a machine and run it, see [DEVELOPMENT.md](docs/DEVELOPMENT.md).
+A FastAPI producer that validates telemetry and durably queues it (`POST /api/v1/telemetry/events` → 202), a separate worker process that stores events idempotently and reconciles deterministic behaviour signals (`rage_click`, `error_burst`), a PostgreSQL-backed local queue with leases, retries and dead-lettering, settings, structured logging, and a PostgreSQL 17 persistence layer (SQLAlchemy + Alembic). Local PostgreSQL runs natively via Homebrew — no Docker. No AI components yet. To set up a machine and run it, see [DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ```bash
 make sync   # install locked dependencies
-make api    # http://127.0.0.1:8000/api/v1/health/live
+make api    # terminal 1 — http://127.0.0.1:8000/api/v1/health/live
+make worker # terminal 2 — processes queued telemetry
 make check  # format check, lint, type check, unit tests
 make db-start && make db-setup && make migrate   # local PostgreSQL 17
 make test-integration

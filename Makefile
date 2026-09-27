@@ -11,9 +11,9 @@ PG_FORMULA := postgresql@17
 PG_BIN = $(shell brew --prefix $(PG_FORMULA))/bin
 PG_LOG = $(shell brew --prefix)/var/log/$(PG_FORMULA).log
 
-.PHONY: help sync api test lint format typecheck check \
+.PHONY: help sync api worker test lint format typecheck check \
 	db-start db-stop db-status db-logs db-setup \
-	migrate migration-status migrate-sql test-integration
+	migrate migration-status migrate-sql queue-status test-integration
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-17s %s\n", $$1, $$2}'
@@ -21,8 +21,11 @@ help: ## List targets
 sync: ## Install locked dependencies into backend/.venv
 	$(BACKEND) uv sync
 
-api: ## Run the API with auto-reload on http://127.0.0.1:8000
+api: ## Run the API (producer) with auto-reload on http://127.0.0.1:8000
 	$(BACKEND) uv run $(ENV_FILE) uvicorn darwin.main:app --reload
+
+worker: ## Run the telemetry worker (consumer); Ctrl-C stops it gracefully
+	$(BACKEND) uv run $(ENV_FILE) python -m darwin.worker
 
 test: ## Run the unit tests (no database needed)
 	$(BACKEND) uv run pytest
@@ -70,6 +73,9 @@ migration-status: ## Show the current migration revision of that database
 
 migrate-sql: ## Print the SQL the migrations would run (no database needed)
 	$(BACKEND) uv run alembic upgrade head --sql
+
+queue-status: ## Read-only queue counts (never message bodies)
+	$(BACKEND) uv run $(ENV_FILE) python -m darwin.queue.status
 
 test-integration: ## Integration tests against local darwin_test (needs PostgreSQL 17)
 	$(BACKEND) uv run $(ENV_FILE) pytest -m integration

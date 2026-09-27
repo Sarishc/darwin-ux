@@ -81,6 +81,27 @@ An interpreted pattern derived from one or more UserEvents.
 
 ---
 
+### QueueMessage (infrastructure, Step 6)
+
+Not a domain entity — the durable record of one unit of asynchronous work in the local queue (`queue_message`). Documented here because it is persisted.
+
+| Field | Type | Description |
+|---|---|---|
+| id | UUID | Row identity |
+| message_id | UUID, UNIQUE | Producer idempotency key; the `event_id` for telemetry |
+| message_type | string | e.g. `telemetry.event`; the worker dispatches on it |
+| body | JSON object | The versioned message (`schema_version` 1). Contains untrusted payload data — never logged |
+| status | enum | `pending`, `done`, `dead` |
+| attempts | int | Deliveries so far (SQS receive count) |
+| visible_at | timestamptz | Receivable when `status = pending` and `visible_at <= now()`; pushed forward by a lease or a retry delay |
+| receipt_handle | UUID | Identifies the current delivery; required to ack / retry / dead-letter |
+| last_error | string (≤ 500) | Sanitised: exception type or field names, never values |
+| created_at / finished_at | timestamptz | Enqueued / reached `done` or `dead` |
+
+**Lifecycle:** `pending` → (receive: leased) → `done` | back to `pending` after a retry delay or lease expiry | `dead` (permanent error or out of attempts; re-queued if the same event is submitted again).
+
+---
+
 ### KnowledgeDocument
 
 A source document ingested into Product Memory.

@@ -176,11 +176,16 @@ def test_ingestion_log_has_the_outcome_but_no_payload_or_session(
     finally:
         logger.removeHandler(caplog.handler)
 
-    records = [r for r in caplog.records if r.getMessage() == "telemetry event ingested"]
-    contexts = [getattr(r, "context", {}) for r in records]
-    assert [c["status"] for c in contexts] == ["accepted", "duplicate"]
-    assert all(c["event_id"] == body["event_id"] for c in contexts)
-    logged = repr(contexts) + caplog.text
+    def contexts(message: str) -> list[dict[str, Any]]:
+        return [getattr(r, "context", {}) for r in caplog.records if r.getMessage() == message]
+
+    # Producer: one line per request. Worker: the duplicate was never queued, so
+    # it stored the event exactly once.
+    assert [c["status"] for c in contexts("telemetry event enqueued")] == ["accepted", "duplicate"]
+    assert [c["status"] for c in contexts("telemetry event ingested")] == ["accepted"]
+    everything = [getattr(r, "context", {}) for r in caplog.records]
+    assert all(c.get("event_id", body["event_id"]) == body["event_id"] for c in everything)
+    logged = repr(everything) + caplog.text
     assert MARKER not in logged
     assert body["session_id"] not in logged
 

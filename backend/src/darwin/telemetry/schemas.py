@@ -114,10 +114,10 @@ IngestionStatus = Literal["accepted", "duplicate"]
 class IngestionResult(BaseModel):
     """What happened to a submitted event. Both outcomes are successes.
 
-    ``duplicate`` is informational: the event_id was already stored, nothing
-    changed. Clients must treat both values the same way (no retry needed).
-    Once ingestion is queued, a duplicate may be reported as ``accepted`` and
-    discarded later by the worker.
+    ``accepted``: newly queued for asynchronous processing (not yet stored).
+    ``duplicate``: an event with this event_id was already accepted earlier —
+    it is queued, being processed, or processed — and nothing new was queued.
+    Clients must treat both values the same way (no retry needed).
     """
 
     event_id: UUID

@@ -1,6 +1,6 @@
 # DarwinUX — Development Environment
 
-> **Status (Step 5):** FastAPI application with health endpoints, a telemetry ingestion endpoint (`POST /api/v1/telemetry/events`, synchronous and idempotent), deterministic behaviour-signal detection (`rage_click`, `error_burst`), settings, structured logging, a PostgreSQL 17 persistence layer (SQLAlchemy + Alembic: `user_event`, `behavior_signal`), unit and integration tests. No queue and no AI components yet.
+> **Status (Step 6):** FastAPI application (the telemetry *producer*) and a separate worker process (the *consumer*) connected by a durable PostgreSQL-backed queue; idempotent event storage and deterministic behaviour-signal reconciliation run in the worker. Settings, structured logging, PostgreSQL 17 (SQLAlchemy + Alembic: `user_event`, `behavior_signal`, `queue_message`), unit and integration tests. No Docker, no AWS, no AI components yet.
 
 ## 1. Prerequisites
 
@@ -132,7 +132,9 @@ A small root `Makefile` wraps the real commands. It only delegates to uv — uv 
 | Command | What it runs (in `backend/`) | Use it to |
 |---|---|---|
 | `make sync` | `uv sync` | Install/refresh dependencies from `uv.lock` |
-| `make api` | `uv run [--env-file ../.env] uvicorn darwin.main:app --reload` | Start the API on http://127.0.0.1:8000 with auto-reload |
+| `make api` | `uv run [--env-file ../.env] uvicorn darwin.main:app --reload` | Start the API (producer) on http://127.0.0.1:8000 with auto-reload |
+| `make worker` | `uv run [--env-file ../.env] python -m darwin.worker` | Start the telemetry worker (consumer). Ctrl-C / SIGTERM stops it after the current message |
+| `make queue-status` | `python -m darwin.queue.status` | Read-only queue counts (pending / leased / delayed / done / dead), oldest pending age, dead-letter reasons. Never message bodies |
 | `make test` | `uv run pytest` | Run the unit tests (no database) |
 | `make lint` | `uv run ruff check .` | Lint |
 | `make format` | `uv run ruff format .` | Format in place |
@@ -238,9 +240,15 @@ backend/src/darwin/
 │   ├── health.py      # /health/live, /health/ready + their response models
 │   ├── telemetry.py   # POST /telemetry/events — parse, delegate, respond
 │   └── errors.py      # 422 responses without echoed input values
+├── worker.py          # the worker process: python -m darwin.worker
+├── queue/
+│   ├── base.py        # MessageQueue port (enqueue/receive/ack/retry/dead_letter)
+│   ├── postgres.py    # PostgresQueue: the local implementation
+│   └── status.py      # read-only queue summary (make queue-status)
 ├── telemetry/
 │   ├── schemas.py     # TelemetryEvent (request), IngestionResult (response)
-│   └── service.py     # ingest_event() (idempotent insert), process_event() (store, then detect)
+│   ├── messages.py    # TelemetryMessageV1: the versioned queue message
+│   └── service.py     # enqueue_event() (producer); ingest_event(), process_telemetry_message() (consumer)
 ├── signals/
 │   ├── detectors.py   # pure detector functions, thresholds, signal_id derivation
 │   └── service.py     # window query + idempotent BehaviorSignal persistence
@@ -251,14 +259,15 @@ backend/src/darwin/
     ├── safety.py      # guard for destructive operations (tests)
     └── models/
         ├── user_event.py
-        └── behavior_signal.py
+        ├── behavior_signal.py
+        └── queue_message.py
 ```
 
 Outside the package: `backend/alembic/` (migrations), `backend/alembic.ini`, `backend/scripts/local_db_setup.sql`.
 
 Modules are added when there is code for them — no empty `rag/`, `agents/`, or `providers/` directories. There is also no `core/` package: generic names like "core" or "utils" become dumping grounds with no clear place in the dependency rule.
 
-**Dependency direction:** `main` → `api`, `db`, `config`, `logging_config`; `api` → `telemetry`, `db`; `telemetry` → `signals`, `db`; `signals` → `db`; `logging_config` → `config`. Nothing below `api` imports FastAPI routing, and nothing imports `main`. Nothing imports `main`. This is the start of the layering in ARCHITECTURE.md: the entrypoint wires pieces together; the pieces don't know about the entrypoint.
+**Dependency direction:** `main` → `api`, `queue`, `db`, `config`, `logging_config`; `api` → `telemetry`, `queue`; `worker` → `telemetry`, `queue`, `db`; `telemetry` → `signals`, `queue`, `db`; `queue` → `db`; `signals` → `db`; `logging_config` → `config`. The API route sees only the `MessageQueue` port. Nothing below `api` imports FastAPI routing, and nothing imports `main`. Nothing imports `main`. This is the start of the layering in ARCHITECTURE.md: the entrypoint wires pieces together; the pieces don't know about the entrypoint.
 
 ### How a request becomes a response
 
@@ -321,8 +330,10 @@ Readiness has two checks. `startup_complete` is true between lifespan startup an
 | `tests/test_db_unit.py` | Timezone-aware timestamps, per-request sessions closed, test-database guard |
 | `tests/test_telemetry_schemas.py` | The event contract: UUIDs, timezones, event_type rules, payload shape/size/depth, forbidden fields |
 | `tests/test_telemetry_api.py` | 422 before persistence, no echoed input, deep payloads, DB failure → 500 without leaking payload |
+| `tests/test_telemetry_messages.py` | The v1 queue message: JSON shape, round trip, version/UUID/timezone rejection, API rules re-applied |
+| `tests/test_worker.py` | Worker decisions with an in-memory queue: ack/retry/dead, backoff, sanitised errors, idle sleep, lock-free shutdown flag, always-reconcile |
 | `tests/test_signal_detectors.py` | Detector rules: thresholds, windows, isolation, bad payloads, determinism, signal_id stability, incremental = replay |
-| `tests/integration/` | Real PostgreSQL behaviour — see "12. Database", "13. Telemetry Ingestion", "14. Behaviour Signals" |
+| `tests/integration/` | Real PostgreSQL behaviour — see "12. Database", "13. Telemetry Ingestion", "14. Behaviour Signals", "15. Queue and Worker" |
 | `tests/test_config.py` | Defaults, `DARWIN_` prefix, case-insensitive log level, fail-fast validation, ignoring future variables |
 | `tests/test_logging.py` | JSON output, structured context, robustness, idempotent configuration |
 
@@ -461,50 +472,63 @@ Anything else — including `id`, `received_at`, `user_id`, `email`, `ip_address
 
 | Situation | HTTP | Body |
 |---|---|---|
-| New event | **202** | `{"event_id": "5b2f0c8e-…", "status": "accepted"}` |
-| Same `event_id` again | **202** | `{"event_id": "5b2f0c8e-…", "status": "duplicate"}` |
+| New event | **202** | `{"event_id": "5b2f0c8e-…", "status": "accepted"}` — durably **queued**, not yet stored |
+| Same `event_id` again (queued, in flight, or already processed) | **202** | `{"event_id": "5b2f0c8e-…", "status": "duplicate"}` — nothing new queued |
 | Invalid event | **422** | FastAPI's error list, **without** the rejected values echoed back |
-| Database unavailable / unexpected error | **500** | `Internal Server Error` (nothing stored; safe to retry) |
+| Database unavailable / unexpected error | **500** | `Internal Server Error` (nothing queued; safe to retry) |
 
-**Why 202 for both:** a duplicate is not an error — it means idempotency worked. One success code keeps clients simple ("2xx = done, stop retrying"). `202 Accepted` rather than `201 Created` because the contract promises *acceptance*, not that processing has finished; that stays true when a queue is added. Clients must not branch on `status` — it is informational, and a future queued pipeline may report `accepted` for a duplicate.
+**What 202 means (Step 6):** *accepted for asynchronous processing* — the event is durably committed to the queue. It does **not** mean the event is already in `user_event`: the worker stores it (and updates signals) shortly afterwards. If no worker is running, events wait safely in the queue.
+
+**Why 202 for both:** a duplicate is not an error — it means idempotency worked. One success code keeps clients simple ("2xx = done, stop retrying"). The response shape is unchanged from Step 4, and still truthful: `duplicate` is decided by the queue's `UNIQUE(message_id = event_id)`, i.e. "this event was already accepted", not "this row already exists in `user_event`". Clients must not branch on `status`. (Events stored *before* Step 6 have no queue row; resending one is `accepted`, queued, and the worker's `UNIQUE(event_id)` makes it a no-op.)
 
 No database id is returned: clients have no use for it, and it would couple them to storage.
 
 ### Idempotency
 
 - The **client** generates `event_id` once, when the event happens, and reuses it on every retry. Only the client can do this: if the server generated the id, a retry after a lost response would look like a brand-new event.
-- The service runs one statement in one transaction: `INSERT … ON CONFLICT (event_id) DO NOTHING RETURNING id`. A returned id means `accepted`; no row means `duplicate`.
-- **Race-safe:** there is no "SELECT, then INSERT". If two deliveries of one event arrive at the same moment, PostgreSQL makes the second wait on the first's row and then skips it. `UNIQUE(event_id)` is the final guarantee — an integration test holds one transaction open and proves the second delivery waits and becomes a duplicate.
+- Two layers, both `INSERT … ON CONFLICT`, neither with a SELECT-then-INSERT race:
+  1. **Queue (API):** `UNIQUE(queue_message.message_id)`, where `message_id = event_id` — decides `accepted` / `duplicate` and keeps one message per event.
+  2. **Event store (worker):** `UNIQUE(user_event.event_id)` — the final guarantee, because queue delivery is *at least once*: a redelivered message stores nothing new.
+- **Race-safe:** if two deliveries of one event are processed at the same moment, PostgreSQL makes the second wait on the first's row and then skips it — an integration test holds one transaction open and proves it.
 - **First delivery wins.** A duplicate with a different payload does not overwrite the stored event.
 
 ### Privacy rules
 
 - Nothing in the contract identifies a person. There are no fields for email, name, account id, IP address, user agent, or device fingerprint, and unknown fields are rejected.
-- `payload` is free-form and **untrusted**: a client could still put personal data in it by mistake. Step 4 bounds its shape and size; it does not try to detect PII. Stricter per-event-type schemas can come later.
+- `payload` is free-form and **untrusted**: a client could still put personal data in it by mistake. Its shape and size are bounded; there is no PII detection. Stricter per-event-type schemas can come later.
+- The queue message body carries the payload too (the worker must store it). Bodies are never logged, never copied into `last_error`, and never shown by `make queue-status`.
 - Payloads are **never logged**, never echoed in 422 errors, and never included in database error messages (the engine uses `hide_parameters=True`).
 - `session_id` is not logged either.
 
 ### Logging
 
-One line per ingested event, at INFO:
+API (producer), one line per request:
 
 ```json
-{"level": "INFO", "logger": "darwin.telemetry.service", "message": "telemetry event ingested", "context": {"event_id": "5b2f0c8e-…", "event_type": "button_click", "status": "accepted"}}
+{"level": "INFO", "logger": "darwin.telemetry.service", "message": "telemetry event enqueued", "context": {"event_id": "5b2f0c8e-…", "event_type": "button_click", "status": "accepted"}}
 ```
 
-Logged: `event_id`, `event_type`, `status`. Not logged: `payload`, `session_id`, `occurred_at`.
+Worker (consumer): `worker started` / `stopping` / `stopped`, then per message `message received` (message_id, type, attempt), `telemetry event ingested` (event_id, event_type, accepted|duplicate), `behavior signal created|revived|superseded`, and `message processed`, `message retry scheduled` (sanitised reason, delay) or `message dead-lettered` (reason).
 
-### Where a queue will attach
+Logged: ids, types, statuses, attempt numbers, sanitised error types. Never logged: `payload`, the queue message body, `session_id`, connection strings, raw exception messages.
 
-`darwin.telemetry.service.process_event` (store the event, then detect signals) is the boundary. The route calls it and knows nothing about SQL. When SQS arrives, the route publishes the validated event instead, and a worker calls the same `process_event`. The URL, request schema, status code, and response shape do not change. See DATA_PIPELINES.md, "Current Implementation vs. Target Design".
+### The queue boundary
+
+The route depends only on the `MessageQueue` port (`darwin/queue/base.py`: `enqueue`, `receive`, `ack`, `retry`, `dead_letter`). Today it is `PostgresQueue`; an SQS adapter will implement the same port. The worker's processing (`telemetry.service.process_telemetry_message`) and everything behind it do not change. See DATA_PIPELINES.md, "Queue and Worker (current)".
 
 ### Trying it
+
+Two terminals (PostgreSQL 17 is already running as a Homebrew service):
 
 ```bash
 make api
 ```
 
-In another terminal (fresh UUIDs each time):
+```bash
+make worker
+```
+
+In a third terminal (fresh UUIDs each time):
 
 ```bash
 curl -s -i -X POST http://127.0.0.1:8000/api/v1/telemetry/events -H 'content-type: application/json' -d "{\"event_id\": \"$(uuidgen)\", \"event_type\": \"button_click\", \"session_id\": \"$(uuidgen)\", \"occurred_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\", \"payload\": {\"component\": \"signup_submit\"}}"
@@ -512,7 +536,7 @@ curl -s -i -X POST http://127.0.0.1:8000/api/v1/telemetry/events -H 'content-typ
 
 Send the exact same body twice to see `accepted` then `duplicate`. Integration tests for ingestion: `make test-integration` (needs PostgreSQL 17).
 
-### Known limits (Step 4)
+### Known limits
 
 - One event per request; no batching.
 - The payload limit is enforced after the body is parsed, so a very large request body is still read into memory before it is rejected. A request-body cap belongs at the edge (load balancer / server config) when the service is exposed publicly.
@@ -530,14 +554,14 @@ After an event is stored, DarwinUX runs deterministic detectors over that sessio
 | `rage_click` | 4 `button_click`/`click` events on the same `payload.component` within 2 s, one session |
 | `error_burst` | 3 `client_error`/`form_error` events within 10 s, one session |
 
-- Detection runs in its **own transaction after** the event is committed. If it fails, the event stays stored, the client still gets `202`, and one error line is logged (`signal detection failed; event is stored`, with the error type only). The session's next accepted event re-reconciles the whole session, which repairs it.
+- Detection runs **in the worker**, in its own transaction after the event is committed, and for every delivery — including redeliveries of an already-stored event. If it fails, the event stays stored and the message is **retried** with backoff (then dead-lettered after 5 attempts); the API is never affected.
 - **Canonical signals are the rows with `superseded_at IS NULL`.** They always equal the detectors' output over the session's full history, whatever order events arrived in. A late event that changes that result supersedes the old row (kept for audit) and adds the new one.
 - Signals are never returned by the API. There is no signal endpoint yet.
 - Replays are safe: identical history gives identical `signal_id`s, `UNIQUE(signal_id)` ignores repeats, and reconciliation is a no-op when nothing changed.
 
 ### Trying it
 
-With `make api` running, send four clicks on one component inside two seconds (same `session_id`, fresh `event_id`s):
+With `make api` and `make worker` running, send four clicks on one component inside two seconds (same `session_id`, fresh `event_id`s):
 
 ```bash
 SID=$(uuidgen); for i in 0 1 2 3; do curl -s -X POST http://127.0.0.1:8000/api/v1/telemetry/events -H 'content-type: application/json' -d "{\"event_id\":\"$(uuidgen)\",\"event_type\":\"button_click\",\"session_id\":\"$SID\",\"occurred_at\":\"2026-09-26T17:00:00.${i}Z\",\"payload\":{\"component\":\"signup_submit\"}}"; echo; done
@@ -561,6 +585,34 @@ psql -h localhost -U darwin -d darwin_dev -c "SELECT e.event_type, e.occurred_at
 
 - Detector logic (no database): `cd backend && uv run pytest tests/test_signal_detectors.py`
 - End-to-end with PostgreSQL: `make test-integration` (includes `tests/integration/test_signals.py` and `tests/integration/test_signal_convergence.py` — late arrivals, permutations, concurrency)
+
+---
+
+## 15. Queue and Worker
+
+Local workflow — no Docker, no AWS:
+
+| Terminal | Command | Role |
+|---|---|---|
+| 1 | `make api` | Producer: validates and queues events (`202` = queued) |
+| 2 | `make worker` | Consumer: stores events, reconciles signals, acks |
+| (any) | `make queue-status` | Read-only: `pending=… leased=… delayed=… done=… dead=…`, oldest pending age, dead-letter reasons |
+
+PostgreSQL 17 runs natively (`make db-start`). Run `make migrate` once after pulling Step 6 (adds `queue_message`, migration `0003`).
+
+Stop the worker with Ctrl-C (or SIGTERM): it finishes the message in hand and exits. Events posted while it is stopped simply wait in the queue; start it again and it drains them. Running two workers is safe — they never receive the same delivery.
+
+Settings (all optional, `DARWIN_` prefix): `QUEUE_VISIBILITY_TIMEOUT_SECONDS` (30), `QUEUE_MAX_ATTEMPTS` (5), `WORKER_POLL_INTERVAL_SECONDS` (1).
+
+Inspecting the queue in SQL — metadata only, never `body`:
+
+```bash
+psql -h localhost -U darwin -d darwin_dev -c "SELECT status, attempts, visible_at, last_error, created_at, finished_at FROM queue_message ORDER BY created_at DESC LIMIT 20;"
+```
+
+Dead-lettered messages stay in the table (with their body) for inspection. Re-sending the same event through the API re-queues a dead message with a fresh attempt budget. There is deliberately no destructive "drain/purge" command.
+
+Tests: `make test-integration` runs `tests/integration/test_queue.py` (enqueue idempotency, leases, stale receipts, retry, dead-letter, concurrent claims, SKIP LOCKED), `test_async_pipeline.py` (HTTP → queue → worker, crash recovery, retries to dead, out-of-order convergence) and `test_worker_process.py` (the real `python -m darwin.worker` process shuts down on SIGTERM/SIGINT). The integration `api` fixture drains the queue after every POST so earlier tests keep checking processed results; the `producer` + `drain` fixtures make the asynchrony explicit.
 
 ---
 

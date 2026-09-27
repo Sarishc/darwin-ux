@@ -1,21 +1,64 @@
-"""Telemetry ingestion: turn one validated event into at most one stored row.
+"""Telemetry processing, split into the producer side and the consumer side.
 
-`process_event` is the processing boundary: store the event, then detect
-signals. Today the HTTP route calls it synchronously. Later the route will
-enqueue the event instead and a worker will call `process_event`; the public
-schemas do not change (see docs/DATA_PIPELINES.md).
+Producer (HTTP request path)
+    enqueue_event: validated event -> versioned message -> durable queue.
+    Returns as soon as the message is committed; nothing is processed yet.
+
+Consumer (worker process)
+    process_telemetry_message: message -> UserEvent (idempotent) -> signals
+    (deterministic reconciliation). Safe to run any number of times for the
+    same message, which at-least-once delivery requires.
 """
 
 import logging
+from dataclasses import dataclass
+from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from darwin.db.models import UserEvent
-from darwin.signals.service import reconcile_session_signals
+from darwin.queue.base import MessageQueue, OutgoingMessage, PermanentMessageError
+from darwin.signals.service import ReconcileResult, reconcile_session_signals
+from darwin.telemetry.messages import TELEMETRY_EVENT, TelemetryMessageV1, parse_message
 from darwin.telemetry.schemas import IngestionResult, TelemetryEvent
 
 logger = logging.getLogger(__name__)
+
+
+# ---- Producer ----------------------------------------------------------------------
+
+
+def enqueue_event(queue: MessageQueue, event: TelemetryEvent) -> IngestionResult:
+    """Durably queue the event for asynchronous processing.
+
+    The message_id is the event_id, and the queue's UNIQUE(message_id) makes a
+    resubmission a no-op: `accepted` = newly queued, `duplicate` = this event_id
+    was already accepted earlier (queued, being processed, or processed).
+    """
+    is_new = queue.enqueue(
+        OutgoingMessage(
+            message_id=event.event_id,
+            message_type=TELEMETRY_EVENT,
+            body=TelemetryMessageV1.from_event(event).to_body(),
+        )
+    )
+    result = IngestionResult(event_id=event.event_id, status="accepted" if is_new else "duplicate")
+    logger.info(
+        "telemetry event enqueued",
+        extra={
+            "context": {
+                "event_id": str(event.event_id),
+                "event_type": event.event_type,
+                "status": result.status,
+            }
+        },
+    )
+    return result
+
+
+# ---- Consumer ----------------------------------------------------------------------
 
 
 def ingest_event(session: Session, event: TelemetryEvent) -> IngestionResult:
@@ -27,7 +70,7 @@ def ingest_event(session: Session, event: TelemetryEvent) -> IngestionResult:
         ON CONFLICT (event_id) DO NOTHING
         RETURNING id
 
-    If another request already stored this event_id (even one committing at
+    If another delivery already stored this event_id (even one committing at
     this very moment), PostgreSQL's UNIQUE constraint makes the insert a
     no-op and RETURNING yields no row. The first delivery wins; a duplicate
     never overwrites it.
@@ -46,7 +89,7 @@ def ingest_event(session: Session, event: TelemetryEvent) -> IngestionResult:
         .returning(UserEvent.id)
     )
 
-    # BEGIN ... COMMIT; any exception rolls back and propagates (-> HTTP 500).
+    # BEGIN ... COMMIT; any exception rolls back and propagates.
     with session.begin():
         inserted_id = session.execute(statement).scalar_one_or_none()
 
@@ -68,33 +111,36 @@ def ingest_event(session: Session, event: TelemetryEvent) -> IngestionResult:
     return result
 
 
-def process_event(session: Session, event: TelemetryEvent) -> IngestionResult:
-    """Store the event, then reconcile its session's signals in a *separate* transaction.
+@dataclass(frozen=True)
+class TelemetryOutcome:
+    stored: IngestionResult
+    signals: ReconcileResult
 
-    The event transaction has already committed when detection starts, so a
-    detector bug or a failed signal insert can never undo a stored event: the
-    failure is logged and the client still gets 202. A failure to store the
-    event itself is *not* caught — the client gets 500 and can retry safely.
 
-    Duplicates skip detection: they add no new history. Every accepted event
-    triggers a full reconciliation of its session, so a detection that failed
-    is repaired by the session's next accepted event.
+def _describe(error: ValidationError) -> str:
+    """Field paths and error kinds only — never the offending values."""
+    problems = sorted(
+        {f"{'.'.join(map(str, e['loc'])) or 'body'}:{e['type']}" for e in error.errors()}
+    )
+    return "invalid telemetry message: " + ", ".join(problems)
+
+
+def process_telemetry_message(session: Session, body: dict[str, Any]) -> TelemetryOutcome:
+    """Worker side: validate, store, reconcile. Idempotent; raises on failure.
+
+    1. Validate the message (schema_version 1 only). Invalid -> PermanentMessageError.
+    2. Store the UserEvent in its own transaction (ON CONFLICT DO NOTHING).
+    3. Reconcile the session's signals in a second transaction — ALWAYS, even
+       when step 2 found a duplicate. A duplicate here usually means an
+       earlier delivery stored the event and then crashed before (or during)
+       reconciliation; skipping would leave that session's signals stale.
+
+    The caller acknowledges the queue message only after this returns.
     """
-    result = ingest_event(session, event)
-    if result.status != "accepted":
-        return result
     try:
-        reconcile_session_signals(session, event.session_id)
-    except Exception as error:  # deliberate boundary: detection must not fail ingestion
-        session.rollback()
-        # Error type only: messages can contain values from the event.
-        logger.error(
-            "signal detection failed; event is stored",
-            extra={
-                "context": {
-                    "event_id": str(event.event_id),
-                    "error_type": type(error).__name__,
-                }
-            },
-        )
-    return result
+        event = parse_message(body)
+    except ValidationError as error:
+        raise PermanentMessageError(_describe(error)) from None
+    stored = ingest_event(session, event)
+    signals = reconcile_session_signals(session, event.session_id)
+    return TelemetryOutcome(stored=stored, signals=signals)

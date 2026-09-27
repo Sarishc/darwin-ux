@@ -6,8 +6,10 @@ must pass the local-`_test` safety guard before anything touches it.
 """
 
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 from alembic import command
@@ -16,11 +18,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Connection, Engine
 from sqlalchemy.orm import Session
 
+from darwin.api.telemetry import get_queue
 from darwin.config import Settings
 from darwin.db.engine import create_db_engine, database_is_available
 from darwin.db.safety import require_local_test_database
-from darwin.db.session import get_session
 from darwin.main import create_app
+from darwin.queue.postgres import PostgresQueue
+from darwin.worker import run_once, telemetry_processor
 
 DEFAULT_TEST_DATABASE_URL = "postgresql+psycopg://darwin@localhost:5432/darwin_test"
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -91,19 +95,56 @@ def connection(migrated_engine: Engine) -> Iterator[Connection]:
             transaction.rollback()
 
 
+SessionFactory = Callable[[], Session]
+
+
 @pytest.fixture
-def api(integration_settings: Settings, connection: Connection) -> Iterator[TestClient]:
-    """The real app, with every request's Session bound to the rolled-back `connection`.
+def test_session_factory(connection: Connection) -> SessionFactory:
+    """Sessions on the rolled-back `connection`; their commits become SAVEPOINTs."""
+    return lambda: Session(bind=connection, join_transaction_mode="create_savepoint")
 
-    The services' own `session.begin()` / commit become SAVEPOINTs, so the
-    production code runs unchanged and nothing is left in darwin_test.
-    """
+
+@pytest.fixture
+def test_queue(test_session_factory: SessionFactory) -> PostgresQueue:
+    return PostgresQueue(test_session_factory, visibility_timeout=timedelta(seconds=30))
+
+
+@pytest.fixture
+def drain(test_queue: PostgresQueue, test_session_factory: SessionFactory) -> Callable[[], int]:
+    """Run the real worker code until no message is visible. Returns messages handled."""
+    processor = telemetry_processor(test_session_factory)
+
+    def run_until_empty() -> int:
+        handled = 0
+        while run_once(test_queue, processor, max_attempts=5) is not None:
+            handled += 1
+            assert handled < 100_000, "drain did not terminate"
+        return handled
+
+    return run_until_empty
+
+
+@pytest.fixture
+def producer(integration_settings: Settings, test_queue: PostgresQueue) -> Iterator[TestClient]:
+    """The real API (the producer) on the rolled-back connection. Nothing is processed."""
     app = create_app(integration_settings)
-
-    def session_on_test_connection() -> Iterator[Session]:
-        with Session(bind=connection, join_transaction_mode="create_savepoint") as session:
-            yield session
-
-    app.dependency_overrides[get_session] = session_on_test_connection
+    app.dependency_overrides[get_queue] = lambda: test_queue
     with TestClient(app) as client:
         yield client
+
+
+@pytest.fixture
+def api(producer: TestClient, drain: Callable[[], int]) -> TestClient:
+    """The producer, plus a worker drain after every POST.
+
+    For tests about what happens *once events are processed* (storage,
+    idempotency, signals). Tests about asynchrony itself use `producer` and
+    call `drain` explicitly.
+    """
+
+    def drain_after_post(response: Any) -> None:
+        if response.request.method == "POST":
+            drain()
+
+    producer.event_hooks = {"request": [], "response": [drain_after_post]}
+    return producer

@@ -27,7 +27,7 @@ def test_database_is_at_the_latest_migration(migrated_engine: Engine, alembic_cf
     with migrated_engine.connect() as connection:
         current = MigrationContext.configure(connection).get_current_revision()
 
-    assert current == head == "0002"
+    assert current == head == "0003"
 
 
 def test_user_event_table_has_the_expected_shape(migrated_engine: Engine) -> None:
@@ -78,3 +78,24 @@ def test_downgrade_and_upgrade_and_startup_never_creates_tables(
         command.upgrade(alembic_cfg, "head")
 
     assert inspect(migrated_engine).has_table("user_event")
+
+
+def test_queue_migration_downgrades_and_upgrades(
+    migrated_engine: Engine, alembic_cfg: Config
+) -> None:
+    command.downgrade(alembic_cfg, "0002")
+    try:
+        assert not inspect(migrated_engine).has_table("queue_message")
+        assert inspect(migrated_engine).has_table("behavior_signal")  # 0002 untouched
+    finally:
+        command.upgrade(alembic_cfg, "head")
+
+    inspector = inspect(migrated_engine)
+    assert inspector.has_table("queue_message")
+    assert [c["column_names"] for c in inspector.get_unique_constraints("queue_message")] == [
+        ["message_id"]
+    ]
+    indexes = {i["name"]: i for i in inspector.get_indexes("queue_message")}
+    claim_index = indexes["ix_queue_message_pending_visible_at"]
+    assert claim_index["column_names"] == ["visible_at"]
+    assert "status" in str(claim_index["dialect_options"]["postgresql_where"])  # partial

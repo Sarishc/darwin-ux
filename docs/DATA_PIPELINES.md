@@ -21,48 +21,76 @@ These are separate pipelines because they have different volume characteristics,
 
 Transform raw user interaction events into behavioral signals that can trigger the evolution loop.
 
-### Current Implementation vs. Target Design
+### Current Implementation
 
-The rest of this section describes the **target** pipeline. What exists today is smaller, and there is **no queue yet**:
+The stage-by-stage design further down describes the **target** pipeline (SQS in AWS). What runs today is the same shape on a local PostgreSQL-backed queue:
 
 ```
-CURRENT (Step 5) — synchronous, one event per request
+STEP 5 (previous) — synchronous: everything inside the HTTP request
 
-Client ──POST /api/v1/telemetry/events──> FastAPI route (api/telemetry.py)
-                                             │ Pydantic: TelemetryEvent (422 if invalid)
-                                             ▼
-                                          telemetry.service.process_event(session, event)
-                                             │
-                                             ├─ transaction 1: ingest_event
-                                             │    INSERT ... ON CONFLICT (event_id) DO NOTHING
-                                             │    ──> user_event            (committed)
-                                             │
-                                             └─ transaction 2 (only if the event is new): reconcile_session_signals
-                                                  per-session advisory lock
-                                                  load the session's full detector-relevant history
-                                                  ──> detectors (pure functions) ──> canonical SignalCandidate[]
-                                                  insert missing (ON CONFLICT signal_id) / un-supersede,
-                                                  mark no-longer-canonical rows superseded_at = now()
-                                                  ──> behavior_signal
-                                                  (a failure here is logged; the event stays stored)
-
-                                          202 {event_id, status: accepted | duplicate}   (signals never in the response)
+Client ──POST──> FastAPI ──> validate ──> INSERT user_event ──> reconcile signals ──> 202
 
 
-FUTURE — asynchronous
+STEP 6 (current) — asynchronous: producer, durable queue, consumer
 
-Client ──POST /api/v1/telemetry/events──> FastAPI route (same) ──> enqueue ──> SQS
-                                          202 {event_id, status: accepted}
-                                                                                 │
-                                                                                 ▼
-                                                                    worker: process_event(session, event)
-                                                                       (the same two transactions)
-                                                                       ──> user_event ──> detectors ──> behavior_signal
+  PRODUCER (API process)                         CONSUMER (worker process: make worker)
+  ─────────────────────                          ──────────────────────────────────────
+  Client ──POST /api/v1/telemetry/events──>      loop:
+    validate TelemetryEvent (422 if invalid)       receive ── lease one visible message
+    build TelemetryMessageV1 (schema_version 1)       │       (UPDATE ... FOR UPDATE SKIP LOCKED)
+    INSERT queue_message                               ▼
+      ON CONFLICT (message_id = event_id)          validate message (v1 only; else dead-letter)
+    COMMIT  ──> 202 {event_id, accepted|duplicate}     ▼
+                                                   tx 1: INSERT user_event ON CONFLICT (event_id) DO NOTHING
+             queue_message (PostgreSQL)                ▼
+        pending ─► leased ─► done                   tx 2: reconcile the session's signals — ALWAYS
+                    │   └──► retry (delayed) ─┐        ▼
+                    │                  ▲      │    ack  ── status = done
+                    └── dead ◄── after max attempts / permanent error
 ```
 
-What stays the same when the queue arrives: the URL, the `TelemetryEvent` request schema, the `202` status, and the response shape — and `process_event` itself, which moves from the request path into the worker. What changes: the route enqueues instead of calling `process_event`, and the API can no longer know synchronously that an event is a duplicate, so it will generally answer `accepted`. That is why the contract tells clients to treat `accepted` and `duplicate` identically.
+- **Producer:** the API. It validates, writes one durable queue row, and returns. It never touches `user_event` or `behavior_signal`.
+- **Consumer:** the worker, a separate OS process (`python -m darwin.worker`). It can be stopped while the API keeps accepting events; the queue buffers them.
+- **Eventual consistency:** `202` now means *accepted for asynchronous processing*. The event appears in `user_event` — and signals update — shortly afterwards (normally well under a second with the worker running; whenever the worker next runs otherwise).
+- **Backpressure:** queue depth is the buffer. If the worker is slow or stopped, `pending` grows (`make queue-status`); nothing is lost and the API stays fast. There is no admission control yet.
 
-Not built yet: batching, the queue, workers, the SDK, and the deferred detectors (below).
+Not built yet: batching, the SDK, SQS, and the deferred detectors (below).
+
+### Queue and Worker (current)
+
+**Why a PostgreSQL table as the local queue.** It is durable (survives crashes and restarts), works across processes, supports safe multi-worker claiming (`FOR UPDATE SKIP LOCKED`), needs no extra daemon (PostgreSQL 17 is already running), and maps closely onto SQS. An in-memory `asyncio.Queue` loses work on restart and cannot be shared by a separate worker process; a file/SQLite queue adds a second store and has no row-level locking for concurrent workers. `LISTEN/NOTIFY` is not used: notifications are not durable, so the table must be the source of truth anyway, and 1-second polling is plenty.
+
+**Message contract (`TelemetryMessageV1`, `darwin/telemetry/messages.py`).** `schema_version` (=1), `event_id`, `event_type`, `session_id`, `occurred_at`, `payload` — plain JSON. No database id, no `received_at` (set by PostgreSQL when the worker stores the event), no signals, no credentials. Messages are versioned separately from the HTTP schema because they outlive deployments: a message queued by today's API may be read by tomorrow's worker. A missing or unknown `schema_version` is rejected, never assumed to be v1. The worker re-applies every API validation rule — the queue is not a trusted source.
+
+**Idempotent enqueue.** `message_id = event_id`, and `UNIQUE(message_id)` makes `INSERT ... ON CONFLICT` a no-op for a known event — no SELECT-then-INSERT race. `accepted` = newly queued; `duplicate` = already accepted earlier (queued, in flight, or done), nothing new queued. Resubmitting an event whose message was dead-lettered re-queues it with a fresh attempt budget (first body kept).
+
+**Lease / visibility timeout.** A message is receivable when `status = 'pending' AND visible_at <= now()`. `receive` atomically increments `attempts`, sets a fresh `receipt_handle`, and pushes `visible_at` 30 s into the future (`DARWIN_QUEUE_VISIBILITY_TIMEOUT_SECONDS`) — in one short, committed transaction. Processing happens *after* that commit, never inside a long transaction. If the worker dies, nothing needs unlocking: the lease simply expires and the message becomes visible again.
+
+**Ack / retry / dead-letter** all require the delivery's `receipt_handle`, so a worker whose lease already expired cannot settle a newer delivery.
+
+| Outcome | When | Effect |
+|---|---|---|
+| **ack** | processing succeeded | `status = done` |
+| **retry** | any other exception (e.g. database unavailable, a detector bug) | lease released, `visible_at = now() + backoff` (2 s, 4 s, 8 s, 16 s, capped at 5 min), sanitised `last_error` |
+| **dead** | malformed message, unknown `schema_version` or message type (permanent: dead immediately), or a failure on attempt 5 (`DARWIN_QUEUE_MAX_ATTEMPTS`), or received more than 5 times (it kept crashing the worker) | `status = dead`, body kept for inspection, sanitised `last_error` |
+
+5 attempts with that backoff give a transient problem ~30 s to clear before a message is parked. It is a local default, not production tuning.
+
+**At-least-once delivery.** A message can be delivered more than once (a crash after processing but before ack; a lease that expires during slow processing). The design does not try to prevent that; it makes it harmless:
+
+- `UNIQUE(event_id)` makes storing the event idempotent.
+- Signal reconciliation is deterministic and replay-safe (Step 5).
+- So the worker **always reconciles**, even when the insert finds a duplicate: a duplicate usually means an earlier delivery stored the event and then crashed before reconciling.
+
+**Crash recovery, step by step:** worker A receives the message (attempt 1) → stores the `UserEvent` → crashes before reconciling and before ack → 30 s later the lease expires → worker B receives it (attempt 2) → the insert is a no-op → the session is reconciled → ack. Final state: one `UserEvent`, the canonical signals, one `done` message. This exact sequence is an integration test.
+
+**Multiple workers.** `SELECT ... FOR UPDATE SKIP LOCKED` inside the claiming `UPDATE`: a row another worker is claiming at that instant is skipped, not waited for. One visible message is leased by exactly one worker; two messages go to two workers. Tested with threads released simultaneously by a barrier.
+
+**Ordering.** Not guaranteed (oldest-visible-first, but retries and concurrent workers reorder). Nothing relies on it: signal reconciliation converges for any arrival order.
+
+**Graceful shutdown.** SIGINT/SIGTERM set a lock-free stop flag; the worker finishes the current message and exits. (A `threading.Event` set from a signal handler can deadlock the main thread — found and fixed during Step 6.)
+
+**Privacy.** The queue body necessarily carries the untrusted payload (the worker must store it). It is never logged, never copied into `last_error` (exception *types* only, or field names for validation errors), and `make queue-status` shows counts and sanitised dead-letter reasons only.
 
 ### Behaviour Signal Detection (current)
 
@@ -470,10 +498,10 @@ Experiments do not need a third pipeline. They reuse the telemetry pipeline:
 
 | Concern | Local development | AWS (later) |
 |---|---|---|
-| Queue | To be decided when the pipeline is built — without Docker (e.g., a native SQS-compatible emulator or a Postgres-backed queue behind the same port) | SQS + DLQ |
+| Queue | `queue_message` table in the local PostgreSQL 17 (`darwin.queue.postgres.PostgresQueue`) | SQS + DLQ, behind the same `MessageQueue` port |
 | Database | Native Homebrew PostgreSQL 17 + pgvector | RDS for PostgreSQL 17 with pgvector |
 | Raw documents | Local directory or S3-compatible emulator | S3 |
-| Workers | `python -m darwin.workers <name>` processes | ECS/Fargate services from the same image |
+| Workers | `python -m darwin.worker` (`make worker`) | ECS/Fargate service from the same image |
 
 The code talks to a queue port and a storage port, so switching is configuration, not a rewrite.
 

@@ -12,6 +12,7 @@ import ``main``.
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import timedelta
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
@@ -24,6 +25,7 @@ from darwin.config import Settings
 from darwin.db.engine import create_db_engine
 from darwin.db.session import create_session_factory
 from darwin.logging_config import configure_logging
+from darwin.queue.postgres import PostgresQueue
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +43,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     engine = create_db_engine(str(settings.database_url))
     app.state.engine = engine
     app.state.session_factory = create_session_factory(engine)
+    # The producer side of the telemetry queue (the worker is a separate process).
+    app.state.queue = PostgresQueue(
+        app.state.session_factory,
+        visibility_timeout=timedelta(seconds=settings.queue_visibility_timeout_seconds),
+    )
     app.state.started = True
     database = make_url(str(settings.database_url))
     logger.info(

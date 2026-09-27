@@ -13,7 +13,7 @@ local files.
 
 from typing import Literal
 
-from pydantic import PostgresDsn, field_validator
+from pydantic import Field, PostgresDsn, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Environment = Literal["local", "test", "dev", "prod"]
@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     log_level: LogLevel = "INFO"
     # One validated URL instead of host/port/user/password scattered around.
     database_url: PostgresDsn = PostgresDsn(DEFAULT_DATABASE_URL)
+
+    # Telemetry queue + worker (Step 6). Local defaults; see docs/DATA_PIPELINES.md.
+    # How long a received message stays invisible to other workers (the lease).
+    queue_visibility_timeout_seconds: float = Field(default=30.0, gt=0)
+    # Deliveries before a message is dead-lettered.
+    queue_max_attempts: int = Field(default=5, ge=1)
+    # How long an idle worker sleeps before polling again.
+    worker_poll_interval_seconds: float = Field(default=1.0, gt=0)
 
     @field_validator("log_level", mode="before")
     @classmethod
