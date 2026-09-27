@@ -1,6 +1,6 @@
 # DarwinUX — Development Environment
 
-> **Status (Step 8):** Product Memory (retrieval only: allowlisted docs → chunks → embeddings in pgvector → filtered vector search → golden-set evaluation); a Next.js demo app (`/demo`, Generation 0) rendered from a validated UI Spec, with a browser telemetry SDK; the FastAPI *producer*; a separate worker (*consumer*) connected by a durable PostgreSQL-backed queue; deterministic behaviour signals; PostgreSQL 17 (`user_event`, `behavior_signal`, `queue_message`); backend and frontend tests. No Docker, no AWS, no LLM calls yet.
+> **Status (Step 9):** hypothesis generation (signal → Product Memory evidence → one structured call through an LLM port → strict validation → `hypothesis_run` / `hypothesis`; deterministic `FakeLLMProvider` only); Product Memory (retrieval only: allowlisted docs → chunks → embeddings in pgvector → filtered vector search → golden-set evaluation); a Next.js demo app (`/demo`, Generation 0) rendered from a validated UI Spec, with a browser telemetry SDK; the FastAPI *producer*; a separate worker (*consumer*) connected by a durable PostgreSQL-backed queue; deterministic behaviour signals; PostgreSQL 17 (telemetry, signals, queue, Product Memory, hypotheses); backend and frontend tests. No Docker, no AWS, no real LLM provider, no agents yet.
 
 ## 1. Prerequisites
 
@@ -154,6 +154,8 @@ A small root `Makefile` wraps the real commands. It only delegates to uv — uv 
 | `make memory-ingest` | `python -m darwin.memory.ingest` | Ingest the allowlisted corpus into `darwin_dev` (idempotent: unchanged documents are skipped). `--config small\|standard\|large` |
 | `make memory-query Q="…"` | `python -m darwin.memory.retrieval "…"` | Top-5 chunks for a query, with sources and scores; records a `retrieval_run` |
 | `make memory-eval` | `python -m darwin.memory.evaluation` | Golden retrieval eval (P@5, R@5, MRR) for each chunking config, in rolled-back transactions; writes `artifacts/retrieval-eval.json` (git-ignored) |
+| `make hypothesis-generate [SIGNAL_ID=…] [SIGNAL_TYPE=…]` | `python -m darwin.hypotheses.generate` | One hypothesis for a stored signal (default: the latest) with the FakeLLMProvider; records a `hypothesis_run` |
+| `make hypothesis-eval` | `python -m darwin.hypotheses.evaluation` | Golden hypothesis eval (18 cases, fake provider, rolled back); writes `artifacts/hypothesis-eval.json` (git-ignored) |
 
 Without make, run the same commands from `backend/`, e.g.:
 
@@ -222,6 +224,8 @@ nvm alias default 24
 | Queue, trace viewer | Later steps | Nothing uses them yet |
 | A real embedding model / provider credentials | When chosen (OPEN_QUESTIONS.md N3) | The hashing baseline is deterministic and offline; a real model must beat it on the golden set |
 | HNSW vector index | Larger corpus | Exact search over ~120 chunks is fast and has perfect recall |
+| A real LLM provider SDK / credentials | When chosen (OPEN_QUESTIONS.md N1) | The port + FakeLLMProvider prove the control layer offline; a real provider must pass `make hypothesis-eval` |
+| LangGraph, agents, LLM-as-judge | Later steps | Step 9 is one bounded call; judges need a real provider and agreement checks |
 | Dockerfile for the app | Later step | Running on the host is faster to iterate on |
 | Evolution Lab (`/lab`), synthetic user simulator | Later steps | Demo surface and telemetry come first |
 | Tailwind, UI component libraries, state/data-fetching libraries | Not planned for the demo | CSS custom properties are the design tokens; `fetch` is enough |
@@ -258,6 +262,17 @@ backend/src/darwin/
 │   ├── schemas.py     # TelemetryEvent (request), IngestionResult (response)
 │   ├── messages.py    # TelemetryMessageV1: the versioned queue message
 │   └── service.py     # enqueue_event() (producer); ingest_event(), process_telemetry_message() (consumer)
+├── llm/
+│   ├── port.py        # LLMProvider protocol, request/result/usage, error types
+│   └── fake.py        # FakeLLMProvider: deterministic, one mode per failure
+├── hypotheses/        # one bounded structured call per signal (Step 9)
+│   ├── queries.py     # signal -> deterministic retrieval query
+│   ├── evidence.py    # EvidenceBundle: safe signal facts + untrusted excerpts
+│   ├── prompt.py      # hypothesis.v1 request (trusted instructions | untrusted evidence)
+│   ├── schema.py      # HypothesisDraft, grounding checks, lexical baseline
+│   ├── service.py     # generate_hypothesis() -> HypothesisRun (+ Hypothesis)
+│   ├── generate.py    # CLI (make hypothesis-generate)
+│   └── evaluation.py  # golden hypothesis eval (make hypothesis-eval)
 ├── memory/            # Product Memory (retrieval only; no LLM)
 │   ├── corpus.py      # the allowlist, safe loading, normalisation
 │   ├── chunking.py    # deterministic markdown / UI Spec chunking + configs
@@ -714,6 +729,24 @@ psql -h localhost -U darwin -d darwin_dev -c "SELECT signal_type, evidence->>'co
 | `src/components/registry.test.tsx` | Exactly six allowlisted types; semantic rendering; markup renders as text; unknown/prototype types throw; field validation codes |
 | `src/lib/telemetry/client.test.ts` | Backend contract; fresh event ids; form_error payload shape; invalid ids dropped; POST without cookies; never rejects (network, 4xx, 5xx, throw); disabled without URL; session id stable, per-session, sessionStorage-only, tamper-safe, storage-failure fallback |
 | `src/components/SpecPage.test.tsx` | Renders from spec, generation 0; one page_view; delayed CTA timing and click telemetry; typed values never in events or request bodies; local completion; identical behaviour when telemetry fails; labels and real buttons |
+
+---
+
+## 17. Hypothesis Generation (Step 9)
+
+One synchronous command turns one stored signal into at most one validated Hypothesis. It uses the deterministic `FakeLLMProvider` — no real LLM is configured, so the "hypothesis" is a templated output that proves the pipeline, not a model's judgment. Design and failure semantics: AGENT_ARCHITECTURE.md, "Current Implementation (Step 9)".
+
+```bash
+make memory-ingest                                   # Product Memory must exist first
+make hypothesis-generate                             # latest canonical signal
+make hypothesis-generate SIGNAL_TYPE=rage_click      # latest of one type
+make hypothesis-generate SIGNAL_ID=<signal uuid>     # a specific signal
+make hypothesis-eval                                 # golden set, fake provider, rolled back
+```
+
+No signal yet? Open `/demo`, click **Get started** on Team Pro several times quickly (it gives delayed feedback), and let `make worker` process the events. Failure modes can be tried by hand: `cd backend && uv run --env-file ../.env python -m darwin.hypotheses.generate --fake-mode hallucinated_reference` (see `--help`). Each call adds a `hypothesis_run` row to `darwin_dev`; only successes add a `hypothesis`.
+
+The command prints the evidence ids, sources and the hypothesis to your terminal; the log line (stderr, JSON) carries only ids, counts, status, latency and token counts — never the prompt, excerpt text or model output.
 
 ---
 

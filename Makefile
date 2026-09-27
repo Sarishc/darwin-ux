@@ -14,7 +14,7 @@ PG_LOG = $(shell brew --prefix)/var/log/$(PG_FORMULA).log
 .PHONY: help sync api worker web web-install web-check test lint format typecheck check \
 	db-start db-stop db-status db-logs db-setup \
 	migrate migration-status migrate-sql queue-status test-integration \
-	memory-ingest memory-query memory-eval
+	memory-ingest memory-query memory-eval hypothesis-generate hypothesis-eval
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-17s %s\n", $$1, $$2}'
@@ -97,6 +97,15 @@ memory-query: ## Retrieve chunks for Q="your question" (records a retrieval_run)
 
 memory-eval: ## Golden-set retrieval eval for small/standard/large chunking (rolled back)
 	$(BACKEND) uv run $(ENV_FILE) python -m darwin.memory.evaluation
+
+# ---- Hypotheses (one bounded LLM call; FakeLLMProvider only in Step 9) ------
+
+hypothesis-generate: ## Hypothesis for SIGNAL_ID=<uuid>, else the latest [SIGNAL_TYPE=...] signal
+	$(BACKEND) uv run $(ENV_FILE) python -m darwin.hypotheses.generate \
+		$(if $(SIGNAL_ID),--signal-id $(SIGNAL_ID)) $(if $(SIGNAL_TYPE),--type $(SIGNAL_TYPE))
+
+hypothesis-eval: ## Golden hypothesis eval with the fake provider (rolled back)
+	$(BACKEND) uv run $(ENV_FILE) python -m darwin.hypotheses.evaluation
 
 test-integration: ## Integration tests against local darwin_test (needs PostgreSQL 17)
 	$(BACKEND) uv run $(ENV_FILE) pytest -m integration

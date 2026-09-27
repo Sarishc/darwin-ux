@@ -185,6 +185,8 @@ A fourth, automatic decision exists: **rollback on guardrail breach** (error rat
 
 ## AI / Agent Decision Flow
 
+> **Built so far (Step 9):** only the straight line *BehaviorSignal → Product Memory retrieval → one structured LLM call → validated Hypothesis* (AGENT_ARCHITECTURE.md, "Current Implementation (Step 9)"). The Jev gates, Research agent, Critic, Muse, LangGraph orchestration and everything after the hypothesis below are still design.
+
 ```mermaid
 graph TD
     TRIGGER["Behavioral Signal Detected"]
@@ -364,7 +366,9 @@ darwin-ux/
 │   │       ├── services/          # Application services, workflows, state transitions
 │   │       ├── domain/            # Pure Pydantic models, enums, transition rules
 │   │       ├── memory/            # Product Memory: corpus, chunking, embeddings, retrieval, evaluation (Step 8)
-│   │       ├── ai/                # LangGraph graph, prompts (later)
+│   │       ├── llm/               # LLM provider port + FakeLLMProvider (Step 9)
+│   │       ├── hypotheses/        # signal → evidence → one structured call → validated Hypothesis (Step 9)
+│   │       ├── ai/                # LangGraph graph (later)
 │   │       ├── evaluation/        # Evaluation engine, metrics, judges
 │   │       ├── pipelines/         # Telemetry & ingestion processing logic
 │   │       ├── mutation/          # UI Spec, component registry, MutationSpec validation

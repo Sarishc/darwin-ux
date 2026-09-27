@@ -246,6 +246,13 @@ A recorded decision point where a rule, Jev, an LLM baseline, or a human evaluat
 
 ---
 
+### Hypothesis generation — implemented (Step 9)
+
+As built in migration 0005 (the Hypothesis section below is the original design; `agent_run_id` waits for AgentRun):
+
+- **hypothesis_run** — one explicit generation attempt, kept whatever the outcome: `id` (the run id), `signal_id` (FK → `behavior_signal.signal_id`), `signal_type`, `request_version` (`hypothesis.v1`), `provider`, `model`, `embedding_model`, `retrieval_query`, `evidence_chunk_ids` (supplied excerpts, rank order), `evidence_hash` (sha256 of the evidence section — what the model saw, without storing it), `status` (CHECK: `succeeded`, `insufficient_evidence`, `provider_unavailable`, `provider_error`, `invalid_output`, `grounding_failed`), `error_type` (CHECK: NULL **iff** succeeded), `validation_errors` (`[{loc, type}]`, never the offending values), `output` (the schema-valid draft, also kept when grounding failed; SQL NULL otherwise), `input_tokens` / `output_tokens` (NULL when the provider reports none), `latency_ms` (the provider call; NULL when no call was made), `created_at`. Index on `signal_id`. No prompts, chunk text, reasoning or raw invalid output.
+- **hypothesis** — the accepted artifact, only from a `succeeded` run: `id`, `run_id` (FK, **UNIQUE**: one per run), `signal_id` (FK), `statement`, `rationale` (both non-empty), `affected_component` (nullable), `confidence` (CHECK `low | medium | high`, uncalibrated), `evidence_references` (non-empty `[{chunk_id, source_key, section}]` — source and section survive re-ingestion, when chunk ids change; no FK to chunks for that reason), `limitations`, `status` (CHECK `proposed`; critique/approval states arrive with those steps), `created_at`. Index on `signal_id`.
+
 ### Hypothesis
 
 A proposed explanation for observed UX friction.

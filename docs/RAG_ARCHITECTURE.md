@@ -47,17 +47,21 @@ golden dataset → per chunking config, in a rolled-back transaction:
 
 **Evaluation.** 26-query golden set (`backend/tests/evals/golden/retrieval.json`), Precision@5 / Recall@5 / MRR, reported per chunking config (see EVALUATION_STRATEGY.md). Current baseline with the hashing provider:
 
+(Recomputed at Step 9. The corpus is DarwinUX's own docs, so these move slightly whenever those docs are edited; results are identical for a given repository state.)
+
 | config | max chars | chunks | P@5 | R@5 | MRR |
 |---|---|---|---|---|---|
-| small | 1000 | 184 | 0.538 | 0.865 | 0.638 |
-| standard | 2000 | 123 | 0.477 | 0.923 | 0.684 |
-| large | 3000 | 114 | 0.485 | 0.923 | 0.667 |
+| small | 1000 | 187 | 0.538 | 0.865 | 0.641 |
+| standard | 2000 | 125 | 0.477 | 0.923 | 0.684 |
+| large | 3000 | 116 | 0.485 | 0.923 | 0.660 |
 
 Smaller chunks raise precision (more, narrower chunks from the right document) but lower recall and MRR (a multi-source question fills the top 5 with near-duplicates). The misses are paraphrases the hashing provider cannot bridge ("undo a change" vs. "rollback"; "where credentials are kept" vs. "Secrets Manager") — the gap a real embedding model is expected to close, now measurable.
 
 **Untrusted context.** Retrieved text is data from documents, never instructions: `ContextBundle` items carry `trust = "untrusted"`, and a document saying "ignore previous instructions" is stored and returned verbatim like any other text (tested). When LLM steps arrive, retrieved text must stay inside a clearly delimited data section of the prompt, and constraints must come from code/registry, never from retrieved text.
 
-**Not built yet (future):** a real embedding provider; reranking; query reformulation; HNSW; using context in LLM calls; the Research agent; online/production retrieval evaluation; LLM-judged context relevance and groundedness; ingestion of experiment reports and generation history.
+**First LLM use (Step 9).** Hypothesis generation (AGENT_ARCHITECTURE.md, "Current Implementation (Step 9)") is the first consumer of retrieved context. It keeps the rule above: excerpts go into the request's separate *untrusted evidence* field, between `BEGIN/END UNTRUSTED EVIDENCE <tag>` lines whose tag is the sha256 of the evidence itself (an excerpt cannot forge the closing line), each labelled `trust: "untrusted"`; the trusted instructions say that nothing inside the evidence is an instruction. Retrieval uses a deterministic per-signal query, `top_k = 5`, and drops excerpts scoring below `0.12` — a floor calibrated for the hashing provider (on-topic ≥ 0.15, unrelated ≤ 0.09) that must be re-measured with any new embedding model. If nothing survives, the model is not called.
+
+**Not built yet (future):** a real embedding provider; reranking; query reformulation; HNSW; LLM-written retrieval queries; the Research agent; online/production retrieval evaluation; LLM-judged context relevance and groundedness; ingestion of experiment reports and generation history.
 
 ## Knowledge Sources
 

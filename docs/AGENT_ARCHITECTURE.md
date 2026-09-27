@@ -18,6 +18,36 @@ The spectrum of implementation options, from simplest to most complex:
 | **LangGraph node** | Stateful, conditional routing, retries | Steps that depend on previous results |
 | **LLM agent with tools** | Autonomous multi-step reasoning | Tasks requiring iterative investigation |
 
+## Current Implementation (Step 9)
+
+Everything else in this document is design. This is what exists today: **one bounded, structured LLM call** that turns one BehaviorSignal into at most one validated Hypothesis. No LangGraph, no agent loop, no tools, no Jev, no Muse, no mutations.
+
+```
+BehaviorSignal (canonical only)
+  → deterministic retrieval query            darwin/hypotheses/queries.py
+  → Product Memory retrieval, top_k = 5      darwin/memory/retrieval.py (Step 8, read-only)
+  → EvidenceBundle (safe signal facts +      darwin/hypotheses/evidence.py
+      excerpts ≥ relevance floor, untrusted)
+      └─ no excerpts → run "insufficient_evidence", the model is NOT called
+  → hypothesis.v1 request                    darwin/hypotheses/prompt.py
+      trusted instructions | untrusted evidence (separate fields, hash-tagged delimiters)
+  → LLMProvider.generate_structured (once)   darwin/llm/port.py — FakeLLMProvider only
+  → parse → strict schema → grounding        darwin/hypotheses/schema.py
+  → HypothesisRun (always) + Hypothesis (only if valid), one transaction
+```
+
+**Provider.** DarwinUX owns the port (`StructuredGenerationRequest`, `StructuredGenerationResult`, `Usage`, three error types). The only implementation is `FakeLLMProvider`, deterministic, with one mode per failure it must prove is caught (malformed output, unknown fields, fake probabilities, overlong text, prose, hallucinated evidence ids, invalid components, obeying an injection, failure, timeout, unavailable). No real provider was added: the provider choice (OPEN_QUESTIONS.md N1) should be made against this evaluation harness, and nothing in Step 9 needs a real model to prove the control layer. A real adapter will live beside `fake.py`, use the vendor's official SDK, keep instructions and evidence in separate message roles, treat missing credentials as `ProviderUnavailableError` (feature unavailable, not a startup failure), and return raw text that DarwinUX validates exactly as it validates the fake's.
+
+**Output contract (`HypothesisDraft`).** `statement` (one line, 20–400 chars), `rationale` (40–1500), `affected_component` (an allowed component id, or null), `confidence` (`low | medium | high` — an **uncalibrated** qualitative judgment, never a probability), `evidence_chunk_ids` (1–5 unique ids), `limitations` (1–5). Unknown fields are forbidden (so there is nowhere to put code or a mutation), types are strict, whitespace is stripped before length checks, code fences and HTML tags are rejected.
+
+**Grounding (deterministic).** Every cited id must be an excerpt id from this run's EvidenceBundle; the component must be the signal's own component (rage_click) or a component declared in the Generation 0 UI Spec (error_burst, whose signal names none). This is citation *validity*, not truthfulness: a hypothesis can cite a real excerpt and still misread it. Semantic faithfulness needs a judge (see EVALUATION_STRATEGY.md) and is not claimed.
+
+**Failure semantics** (`hypothesis_run.status` / `error_type`): `insufficient_evidence` (`no_context`, `low_relevance` — a controlled terminal outcome, not an error: the model is never asked to invent), `provider_unavailable`, `provider_error` (`failure`, `timeout`, `unexpected:<Class>`), `invalid_output` (`not_json`, `missing`, `extra_forbidden`, `literal_error`, `string_too_long`, …), `grounding_failed` (`unknown_evidence_reference`, `invalid_component`). Every outcome is a persisted run; only `succeeded` has a Hypothesis. An unknown or superseded signal raises `SignalNotFoundError` and records nothing (there is no signal to attach it to).
+
+**Repeat calls.** Every explicit generation is a new run. Model calls are neither deterministic nor free, so nothing pretends to deduplicate them; the fake is deterministic only so tests can be exact.
+
+**Still future:** the Research agent (LLM-written queries, retrieval loops), the Critic, LangGraph orchestration, Jev gates, Muse mutation generation, LLM-as-judge evaluation, a real provider.
+
 ## Responsibility Analysis
 
 ### 1. Signal Detection (Observer)
@@ -90,6 +120,8 @@ LangGraph node: research_agent
 ---
 
 ### 3. Hypothesis Formation (Hypothesis Agent)
+
+> **Implemented (Step 9)** as a single structured call — see "Current Implementation (Step 9)" above. The sketch below used `confidence: float`; the implementation uses a qualitative `low | medium | high` enum instead, because a model-invented probability looks calibrated and is not.
 
 **Proposed name:** Hypothesis Agent
 

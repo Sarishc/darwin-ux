@@ -12,11 +12,13 @@ It is not a chatbot wrapper. It is a closed-loop system where software evolves t
 
 ## Status
 
-**Step 8 — Product Memory / RAG Foundation** (Steps 0–7 complete)
+**Step 9 — LLM Layer + Grounded Hypothesis Generation** (Steps 0–8 complete)
 
-Retrieval-only Product Memory: an allowlisted corpus of DarwinUX docs and the Generation 0 UI Spec, chunked deterministically, embedded through a provider port (a deterministic hashing baseline — no real model yet), stored in PostgreSQL + pgvector, retrieved by exact cosine search with SQL filters, and measured on a 26-query golden set (Precision@K, Recall@K, MRR) across chunking configs. No LLM calls.
+One bounded, structured LLM call per signal: a BehaviorSignal is turned into a deterministic retrieval query, Product Memory evidence is bundled (marked untrusted), a versioned `hypothesis.v1` request goes through a DarwinUX-owned provider port, and the output must pass a strict schema and deterministic grounding checks (cited ids ⊆ supplied excerpts, allowed component) before it becomes a Hypothesis. Every attempt is an audited `hypothesis_run`. Only a deterministic `FakeLLMProvider` exists — no real model, no agents, no Jev, no Muse, no mutations. An 18-case golden set measures the control layer.
 
-A Next.js demo app (`/demo`) rendered from a validated, data-only **Generation 0 UI Spec** through an allowlisted component registry, with deliberate UX friction and a small browser telemetry SDK. Behind it: a FastAPI producer that validates telemetry and durably queues it (`POST /api/v1/telemetry/events` → 202), a separate worker process that stores events idempotently and reconciles deterministic behaviour signals (`rage_click`, `error_burst`), a PostgreSQL-backed local queue with leases, retries and dead-lettering, settings, structured logging, and a PostgreSQL 17 persistence layer (SQLAlchemy + Alembic). Local PostgreSQL runs natively via Homebrew — no Docker. No AI components yet. To set up a machine and run it, see [DEVELOPMENT.md](docs/DEVELOPMENT.md).
+Product Memory (Step 8, retrieval only): an allowlisted corpus of DarwinUX docs and the Generation 0 UI Spec, chunked deterministically, embedded through a provider port (a deterministic hashing baseline — no real model yet), stored in PostgreSQL + pgvector, retrieved by exact cosine search with SQL filters, and measured on a 26-query golden set (Precision@K, Recall@K, MRR) across chunking configs.
+
+A Next.js demo app (`/demo`) rendered from a validated, data-only **Generation 0 UI Spec** through an allowlisted component registry, with deliberate UX friction and a small browser telemetry SDK. Behind it: a FastAPI producer that validates telemetry and durably queues it (`POST /api/v1/telemetry/events` → 202), a separate worker process that stores events idempotently and reconciles deterministic behaviour signals (`rage_click`, `error_burst`), a PostgreSQL-backed local queue with leases, retries and dead-lettering, settings, structured logging, and a PostgreSQL 17 persistence layer (SQLAlchemy + Alembic). Local PostgreSQL runs natively via Homebrew — no Docker. To set up a machine and run it, see [DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ```bash
 make sync   # install locked dependencies
@@ -25,6 +27,7 @@ make worker # terminal 2 — processes queued telemetry
 make web    # terminal 3 — http://localhost:3000/demo (first: make web-install)
 make web-check  # frontend lint, type check, tests, production build
 make memory-ingest && make memory-eval   # Product Memory: ingest corpus, evaluate retrieval
+make hypothesis-generate && make hypothesis-eval   # hypothesis for the latest signal; golden eval
 make check  # format check, lint, type check, unit tests
 make db-start && make db-setup && make migrate   # local PostgreSQL 17
 make test-integration

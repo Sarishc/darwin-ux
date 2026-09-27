@@ -75,7 +75,10 @@ Built: allowlisted corpus, deterministic chunking, embedding port + hashing base
 **Learn:** document ingestion, chunking, embeddings, vector search, retrieval evaluation, LangChain loaders/splitters where they help.
 **Exit:** retrieval metrics computed on the golden set and recorded; changing chunk size shows a measurable effect.
 
-### Step 4 — LLM Layer
+### Step 4 — LLM Layer ✅ hypothesis part (built as "Step 9")
+
+Built: DarwinUX-owned LLM port + deterministic `FakeLLMProvider`, versioned `hypothesis.v1` request, EvidenceBundle, strict output schema, deterministic grounding checks, `hypothesis_run` / `hypothesis` (migration 0005), 18-case golden hypothesis eval. Not yet: a real provider adapter (N1), the critique call, LLM-as-judge relevance / faithfulness.
+
 
 - LLM provider port + one adapter; prompt templates versioned in git; `ModelCall` records.
 - Hypothesis and critique as structured-output calls.

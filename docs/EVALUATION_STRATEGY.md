@@ -86,6 +86,20 @@ The baseline uses the deterministic hashing embedding provider, so results are i
 
 ### Level 2: LLM Evaluation
 
+**Implemented (Step 9), deterministic part:** `make hypothesis-eval` runs the golden hypothesis set (`backend/tests/evals/golden/hypotheses.json`, 18 cases: grounded rage_click / error_burst, no usage metadata, empty memory, irrelevant memory, a retrieved prompt injection treated as data, a provider that obeys it, an unknown evidence id, an invalid component, four malformed outputs plus prose, provider failure / timeout / unavailable) with the `FakeLLMProvider`, in one rolled-back transaction, and writes `artifacts/hypothesis-eval.json` (`darwinux.hypothesis-eval.v1`, git-ignored). Cases state expected *properties* — status, error type, component, sources that must be cited, text that must not appear — never exact prose. Reported separately:
+
+| Metric | Definition | Step 9 (fake) |
+|---|---|---|
+| Schema compliance | schema-valid outputs / outputs returned | 7/13 — set by the fixture mix; the point is that each bad output is caught |
+| Evidence-reference validity | outputs citing only supplied excerpts / schema-valid outputs | 6/7 |
+| Component accuracy | accepted hypotheses naming the expected component / cases expecting one | 5/5 |
+| Source-reference success | cases citing every expected source / cases expecting sources | 3/3 |
+| Failure handling | failure cases in the expected status + error type with no Hypothesis / failure cases | 13/13 |
+| Lexical support (**baseline**) | mean share of a hypothesis's content words present in its cited excerpts + signal facts | 0.54 |
+| Latency / tokens | per provider call (fake: char-based estimates) | — |
+
+With a fake provider these numbers measure DarwinUX's **control layer**, not model quality. Lexical support is word overlap — it scores a contradiction built from the evidence's own words highly (tested) — and is deliberately not called faithfulness. **Not yet:** LLM-as-judge relevance, faithfulness and unsupported-claim detection. They need a real provider for the judge, a judge-agreement check against human labels, and must never be the only gate: the deterministic checks above stay primary and blocking.
+
 **What we're evaluating:** Do LLM calls (hypothesis generation, critique, etc.) produce high-quality, well-structured outputs?
 
 | Metric | Type | What It Measures |

@@ -55,7 +55,7 @@ Decide during the step that needs it; a sensible default is given.
 
 | # | Question | Default until decided |
 |---|---|---|
-| N1 | Initial LLM provider/model for hypothesis, critique, research, judges | Any one provider behind the port; choose on structured-output support and cost |
+| N1 | Initial LLM provider/model for hypothesis, critique, research, judges | Step 9 ships the port and a deterministic `FakeLLMProvider` only. Choose one provider behind the port on structured-output support and cost, and require it to pass `make hypothesis-eval` before use |
 | N2 | Critic on a different provider than the generator? | Same provider, different prompt, in v1; test cross-provider later |
 | N3 | Embedding model and dimension | Step 8 ships only a deterministic hashing baseline (384-d, recorded per document). Choosing a real model means a migration if its dimension differs, a full re-embed, and beating the baseline on the golden set |
 | N4 | Local queue (no Docker locally) | A native SQS-compatible emulator or a Postgres-backed queue behind the queue port; decide in the telemetry step |
