@@ -342,7 +342,6 @@ This is a **DarwinUX-owned port**, not Muse's API. `MutationContext` carries the
 ```
 darwin-ux/
 ├── README.md
-├── compose.yaml                   # Local services (Step 2+): Postgres+pgvector, SQS emulator, OTel collector
 ├── .env.example                   # Committed env template; real values go in git-ignored .env
 ├── .nvmrc  .editorconfig  .gitignore
 ├── docs/                          # Architecture & design documentation
@@ -366,7 +365,7 @@ darwin-ux/
 │   │       ├── pipelines/         # Telemetry & ingestion processing logic
 │   │       ├── mutation/          # UI Spec, component registry, MutationSpec validation
 │   │       ├── providers/         # LLM, embedding, Jev, Muse ports + adapters
-│   │       ├── data/              # Repositories, database, queue, object storage
+│   │       ├── db/                # SQLAlchemy engine, sessions, ORM models (queue/storage adapters come later)
 │   │       └── config/            # Settings, provider config
 │   ├── tests/
 │   │   ├── unit/

@@ -14,6 +14,8 @@ from typing import Literal
 from fastapi import APIRouter, Request, Response, status
 from pydantic import BaseModel
 
+from darwin.db.engine import database_is_available
+
 router = APIRouter(prefix="/health", tags=["health"])
 
 
@@ -44,11 +46,19 @@ def live() -> LivenessResponse:
     responses={status.HTTP_503_SERVICE_UNAVAILABLE: {"model": ReadinessResponse}},
 )
 def ready(request: Request, response: Response) -> ReadinessResponse:
-    checks = [
-        CheckResult(name="startup_complete", ok=request.app.state.started is True),
-        # Dependency checks (database, queue, …) are appended here when those
-        # dependencies exist. The response contract does not change.
-    ]
+    started = request.app.state.started is True
+    checks = [CheckResult(name="startup_complete", ok=started)]
+    # Dependencies are only probed once startup has created them.
+    if started:
+        database_ok = database_is_available(request.app.state.engine)
+        checks.append(
+            CheckResult(
+                name="database",
+                ok=database_ok,
+                # Deliberately vague: connection errors can contain hosts and usernames.
+                detail=None if database_ok else "unavailable",
+            )
+        )
     is_ready = all(check.ok for check in checks)
     if not is_ready:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE

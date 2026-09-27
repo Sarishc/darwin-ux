@@ -72,7 +72,7 @@ Beyond "is it up", AI components need quality monitoring over time:
 |---|---|---|
 | Traces | OTel collector → local trace viewer | ADOT collector → CloudWatch/X-Ray |
 | Metrics | Collector debug output / trace viewer is enough at first | CloudWatch metrics |
-| Logs | stdout (docker compose logs) | CloudWatch Logs with explicit retention |
+| Logs | stdout of `make api` / worker processes | CloudWatch Logs with explicit retention |
 | AI/audit view | Evolution Lab (reads Postgres) | Evolution Lab (reads Postgres) |
 
 No Grafana/Prometheus stack is planned: it would be one more system to run without teaching anything the CloudWatch path doesn't.

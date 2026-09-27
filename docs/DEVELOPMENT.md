@@ -1,6 +1,6 @@
 # DarwinUX — Development Environment
 
-> **Status (Step 2):** a minimal FastAPI application with health endpoints, settings, structured logging, and tests. No database, no local services, no AI components yet.
+> **Status (Step 3):** FastAPI application with health endpoints, settings, structured logging, a PostgreSQL 17 persistence layer (SQLAlchemy + Alembic, one `user_event` table), unit and integration tests. No AI components yet.
 
 ## 1. Prerequisites
 
@@ -12,9 +12,10 @@
 | uv | recent release | Python versions, virtual env, dependencies, lockfile | `uv --version` |
 | Node.js | **24.x (LTS)** | Future Next.js frontend | `node --version` |
 | npm | ships with Node 24 | Future frontend dependencies | `npm --version` |
-| Docker engine + Compose v2 | recent | Future local Postgres / queue emulator | `docker compose version` |
+| Homebrew | recent | Installs PostgreSQL 17 + pgvector | `brew --version` |
+| PostgreSQL | **17.x** (Homebrew `postgresql@17`) + `pgvector` | Local database (native, no containers) | `make db-status` |
 
-Docker is **not needed until Step 2**. On macOS any Docker engine works (Docker Desktop, Colima, OrbStack); the project assumes only `docker` and `docker compose`.
+**Docker is not used for local development.** PostgreSQL runs natively via Homebrew. Containers may still appear later for *deployment* (the ECS image), which is separate from how you develop locally.
 
 ## 2. Python Version: 3.13
 
@@ -50,7 +51,7 @@ With nvm: `nvm use` in the repo reads `.nvmrc`.
 | Speed | Slow resolver | Moderate | Very fast |
 | Tools needed | pip + venv + pip-tools | Poetry + something to install Python | One binary |
 
-The main reason is **one tool with standard metadata**: `pyproject.toml` stays portable (any PEP 621 tool can read it), and `uv.lock` makes installs reproducible between the laptop, CI, and the Docker image. The same `uv sync --frozen` command will be used in all three.
+The main reason is **one tool with standard metadata**: `pyproject.toml` stays portable (any PEP 621 tool can read it), and `uv.lock` makes installs reproducible between the laptop, CI, and (later) the deployment image. The same `uv sync --frozen` command will be used in all three.
 
 **Project shape:** `backend/` is an installable package using the **src layout** (`backend/src/darwin/`). The build backend is **`uv_build`** — uv's own, pure-Python backend: it needs no plugins, understands the src layout by default, and avoids adding a second tool (hatchling/setuptools) for a job uv already does. The distribution is named `darwin-ux-backend`; the import name is `darwin` (`[tool.uv.build-backend] module-name`). `uv sync` installs it into `.venv` in editable mode, so code changes take effect without reinstalling.
 
@@ -102,27 +103,27 @@ A formatter makes style a non-topic; a linter catches mistakes a formatter can't
 
 **Status:** installed via the `dev` dependency group and run by `make check`. mypy uses the Pydantic plugin so model/settings constructors are type-checked.
 
-## 8. Local-Service Strategy (not implemented)
+## 8. Local Services: Native PostgreSQL 17
 
-Docker Compose is the right tool: DarwinUX needs a few long-lived local dependencies, not an orchestrator.
+DarwinUX's only local service today is **PostgreSQL 17, installed with Homebrew** and run as a background service — no Docker, Compose, or VM.
 
-Planned, introduced only when a step needs them:
-
-| Service | Introduced | Local image | AWS equivalent |
-|---|---|---|---|
-| PostgreSQL + pgvector | Step 2 | an official pgvector Postgres image | RDS for PostgreSQL |
-| SQS-compatible queue emulator | Step 2 | ElasticMQ or LocalStack (OPEN_QUESTIONS.md N4) | SQS |
-| OpenTelemetry collector + trace viewer | Step 2+ | OTel collector + Jaeger | ADOT collector → CloudWatch |
-| S3-compatible storage | Step 3, only if a local folder is insufficient | — | S3 |
+| Service | Local | AWS equivalent |
+|---|---|---|
+| PostgreSQL 17 (+ pgvector files, extension not enabled) | Homebrew `postgresql@17` on `localhost:5432` | RDS for PostgreSQL 17 |
+| Queue (later) | Decided when the telemetry pipeline needs one (OPEN_QUESTIONS.md N4) | SQS |
+| Trace viewer (later) | Decided when OpenTelemetry is added | CloudWatch / X-Ray |
 
 Principles:
 
-- **Only dependencies run in Compose; the application does not** (at first). The API and workers run on the host with `uv run`, which gives fast reloads and a normal debugger. A containerised app service is added when the Dockerfile is written.
-- A single `compose.yaml` at the repository root, so `docker compose up` works without `-f` flags.
-- Named volumes for data; `docker compose down -v` is the documented reset.
-- Services bind to `localhost` only.
+- The application runs on the host with `uv run` (fast reloads, normal debugger). PostgreSQL runs beside it as a native service.
+- SQLAlchemy and Alembic only see a connection URL, so the same code runs against Homebrew PostgreSQL locally and RDS in production.
+- `make db-start` uses `brew services run`, which starts PostgreSQL **without** registering it to start at login.
 
-**Local machine note:** this Mac has the Docker CLI and Colima (the Docker engine VM) installed via Homebrew, plus the standalone `docker-compose` binary. Colima must be started (`colima start`) before Docker can be used, and the Compose plugin must be made visible to `docker` (see "Manual setup" below).
+**This Mac also has PostgreSQL 14 and 16 installed (stopped).** All three default to port 5432, and `/opt/homebrew/bin/postgres` is the **14** server while `psql`/`pg_ctl`/`initdb` come from libpq **18**. Therefore:
+
+- Keep 14 and 16 stopped. Only one server can own port 5432.
+- Never rely on bare `postgres`/`pg_ctl` commands for DarwinUX. The Makefile calls PostgreSQL 17 by absolute path (`$(brew --prefix postgresql@17)/bin/...`).
+- `make db-status`, `make db-setup`, and an integration test all verify the server is **17**, so a wrong server on 5432 fails loudly.
 
 ## 9. Commands
 
@@ -132,11 +133,19 @@ A small root `Makefile` wraps the real commands. It only delegates to uv — uv 
 |---|---|---|
 | `make sync` | `uv sync` | Install/refresh dependencies from `uv.lock` |
 | `make api` | `uv run [--env-file ../.env] uvicorn darwin.main:app --reload` | Start the API on http://127.0.0.1:8000 with auto-reload |
-| `make test` | `uv run pytest` | Run the tests |
+| `make test` | `uv run pytest` | Run the unit tests (no database) |
 | `make lint` | `uv run ruff check .` | Lint |
 | `make format` | `uv run ruff format .` | Format in place |
 | `make typecheck` | `uv run mypy src tests` | Type check |
-| `make check` | format check + lint + typecheck + tests | Run everything CI will run, before every commit |
+| `make check` | format check + lint + typecheck + unit tests | Fast gate before every commit; **never needs PostgreSQL** |
+| `make db-start` / `make db-stop` | `brew services run` / `stop postgresql@17` | Start / stop local PostgreSQL 17 (data is kept) |
+| `make db-status` | `pg_isready` + server version + pgvector availability | Check the right server is up |
+| `make db-logs` | `tail -f` the PostgreSQL 17 log | Debug the server |
+| `make db-setup` | `psql -f backend/scripts/local_db_setup.sql` | One-time, idempotent: role `darwin`, databases `darwin_dev`, `darwin_test` |
+| `make migrate` | `alembic upgrade head` | Apply migrations to `darwin_dev` |
+| `make migration-status` | `alembic current --verbose` | Which revision is `darwin_dev` at? |
+| `make migrate-sql` | `alembic upgrade head --sql` | Print the DDL without a database |
+| `make test-integration` | `pytest -m integration` | Integration tests against `darwin_test` (needs PostgreSQL 17) |
 
 Without make, run the same commands from `backend/`, e.g.:
 
@@ -167,10 +176,24 @@ System-level installs are left to you; none were performed automatically.
 brew install uv
 ```
 
-Then make the Homebrew Compose plugin visible to `docker` by adding this key to `~/.docker/config.json` (keep the existing keys):
+PostgreSQL 17 and pgvector (Homebrew; `postgresql@17` is keg-only, so it does not replace the other versions' commands):
 
-```json
-"cliPluginsExtraDirs": ["/opt/homebrew/lib/docker/cli-plugins"]
+```bash
+brew install postgresql@17 pgvector
+```
+
+Then, from the repository root:
+
+```bash
+make db-start
+```
+
+```bash
+make db-setup
+```
+
+```bash
+make migrate
 ```
 
 Optionally align nvm with the project (your nvm default is Node 20, which is end-of-life):
@@ -187,8 +210,9 @@ nvm alias default 24
 
 | Item | Arrives | Why not now |
 |---|---|---|
-| SQLAlchemy, Alembic, database drivers | Later step | No database yet |
-| `compose.yaml`, Postgres, queue emulator | Later step | Nothing connects to them |
+| Docker / Compose for local development | Not planned | Native Homebrew PostgreSQL is simpler for one developer |
+| Queue, trace viewer | Later steps | Nothing uses them yet |
+| `CREATE EXTENSION vector`, vector columns | RAG step | pgvector is installed but not enabled until retrieval exists |
 | Dockerfile for the app | Later step | Running on the host is faster to iterate on |
 | Next.js, `package.json`, `node_modules` | Step 2 (demo app) / 7 | Frontend not started |
 | GitHub Actions | Later step | `make check` is the same gate, run locally |
@@ -209,14 +233,23 @@ backend/src/darwin/
 ├── main.py            # create_app() + lifespan; `app` for Uvicorn
 ├── config.py          # Settings (pydantic-settings)
 ├── logging_config.py  # JSON log formatter + configure_logging()
-└── api/
-    ├── router.py      # the /api/v1 router; includes every v1 router
-    └── health.py      # /health/live, /health/ready + their response models
+├── api/
+│   ├── router.py      # the /api/v1 router; includes every v1 router
+│   └── health.py      # /health/live, /health/ready + their response models
+└── db/
+    ├── base.py        # DeclarativeBase + constraint naming convention
+    ├── engine.py      # create_db_engine(), database_is_available() (SELECT 1)
+    ├── session.py     # session factory + request-scoped DbSession dependency
+    ├── safety.py      # guard for destructive operations (tests)
+    └── models/
+        └── user_event.py
 ```
+
+Outside the package: `backend/alembic/` (migrations), `backend/alembic.ini`, `backend/scripts/local_db_setup.sql`.
 
 Modules are added when there is code for them — no empty `rag/`, `agents/`, or `providers/` directories. There is also no `core/` package: generic names like "core" or "utils" become dumping grounds with no clear place in the dependency rule.
 
-**Dependency direction:** `main` → `api`, `config`, `logging_config`; `logging_config` → `config`; `config` and `api/health` import nothing else from `darwin`. Nothing imports `main`. This is the start of the layering in ARCHITECTURE.md: the entrypoint wires pieces together; the pieces don't know about the entrypoint.
+**Dependency direction:** `main` → `api`, `db`, `config`, `logging_config`; `api` → `db`; `logging_config` → `config`; `db` and `config` import nothing from `api` or `main`. Nothing imports `main`. This is the start of the layering in ARCHITECTURE.md: the entrypoint wires pieces together; the pieces don't know about the entrypoint.
 
 ### How a request becomes a response
 
@@ -257,24 +290,128 @@ Log with `logger.info("message", extra={"context": {...}})`. Only the `darwin.*`
 | | `GET /api/v1/health/live` | `GET /api/v1/health/ready` |
 |---|---|---|
 | Question | Is the process alive and able to answer HTTP? | Can this instance do its real work right now? |
-| Checks | Nothing — if the handler runs, the answer is yes | Application state now; dependencies (database, queue) later |
+| Checks | Nothing — if the handler runs, the answer is yes | Startup completed, and PostgreSQL answers `SELECT 1` |
 | Failure means | The process is stuck → **restart** it | Not ready yet or a dependency is down → **stop sending traffic**, don't restart |
 | Response | `200 {"status": "alive"}` | `200 {"status": "ready", "checks": [...]}` or `503 {"status": "not_ready", "checks": [...]}` |
 
 Why they must differ: if liveness also checked the database, a database outage would make the orchestrator restart every healthy API instance in a loop — making the outage worse. Readiness failing only removes instances from the load balancer until the dependency recovers.
 
-Today readiness has one real check, `startup_complete`: true after the lifespan startup has run, false before startup and after shutdown. When a database arrives, a `database` check is appended to the `checks` list; the response shape and status codes stay the same, so nothing that calls the endpoint has to change.
+Readiness has two checks. `startup_complete` is true between lifespan startup and shutdown. `database` runs `SELECT 1` through the engine's pool (2-second connect timeout, so a stopped server gives a fast `503`, not a hang). It never runs migrations or real queries. On failure its detail is just `"unavailable"`, because driver errors can contain hostnames and usernames. The `database` check was added without changing the response shape — exactly what the Step 2 contract was designed for.
+
+| PostgreSQL | `/live` | `/ready` |
+|---|---|---|
+| running | 200 | 200 |
+| stopped | 200 | 503 (`database: false`) |
 
 ### Tests
 
 | File | Covers |
 |---|---|
 | `tests/test_app.py` | App factory, metadata, independent instances, `/api/v1` versioning |
-| `tests/test_health.py` | Liveness/readiness responses, schemas, 503 before startup and after shutdown, method handling |
+| `tests/test_health.py` | Liveness/readiness responses, 503 when the DB is unreachable, before startup and after shutdown |
+| `tests/test_db_unit.py` | Timezone-aware timestamps, per-request sessions closed, test-database guard |
+| `tests/integration/` | Real PostgreSQL behaviour — see "12. Database" |
 | `tests/test_config.py` | Defaults, `DARWIN_` prefix, case-insensitive log level, fail-fast validation, ignoring future variables |
 | `tests/test_logging.py` | JSON output, structured context, robustness, idempotent configuration |
 
 API tests use FastAPI's `TestClient`, which calls the ASGI app in-process — no server or network needed. Using it as a context manager (`with TestClient(app)`) runs the lifespan, exactly like Uvicorn.
+
+---
+
+## 12. Database
+
+### The layers
+
+```
+FastAPI handler ──> Session (unit of work) ──> Engine (pool of connections) ──> psycopg 3 ──> PostgreSQL 17
+                    darwin/db/session.py       darwin/db/engine.py               driver          server
+```
+
+- **SQLAlchemy is not PostgreSQL.** SQLAlchemy is a Python library that builds SQL and maps rows to objects. psycopg 3 is the driver that speaks PostgreSQL's wire protocol. PostgreSQL is the server that actually stores data.
+- **Engine** (`create_db_engine`): created **once** at app startup (lifespan), disposed of at shutdown. It owns the **connection pool**: opening a PostgreSQL connection is slow (network + authentication), so the pool keeps a few open and lends them out. Creating an engine does not connect, which is why the API starts even when PostgreSQL is down.
+- **Session** (`get_session` → `DbSession`): one per request, always closed afterwards. It tracks objects you add/load and turns them into SQL when flushed. Never share one Session globally: it is not thread-safe and would mix different requests' work.
+- **Transaction**: an all-or-nothing boundary. Code that changes data owns it explicitly with `with session.begin():` — commit on success, rollback on exception. Nothing is committed implicitly.
+
+**Synchronous SQLAlchemy** (not async): FastAPI runs sync handlers in a thread pool, the workload is small, future workers are ordinary scripts, and sync code is easier to read and debug. Switching later is contained in `darwin/db/`.
+
+### Configuration
+
+- One setting: `DARWIN_DATABASE_URL`, validated as a PostgreSQL URL that must use the `postgresql+psycopg://` scheme.
+- Default (no `.env`): `postgresql+psycopg://darwin@localhost:5432/darwin_dev` — local, no password in code.
+- `.env.example` contains the LOCAL ONLY values created by `make db-setup` (`darwin` / `darwin_local_only`). They are not secrets. Homebrew trusts local connections, so locally the password is not actually checked; it is there so URLs look like production.
+- An empty `DARWIN_DATABASE_URL=` counts as unset.
+- Production: RDS, credentials from Secrets Manager, TLS required. Never this file.
+
+### Local databases
+
+| Database | Used by | Written by |
+|---|---|---|
+| `darwin_dev` | `make api`, `make migrate` | You, while developing |
+| `darwin_test` | `make test-integration` only | Tests (transactions are rolled back; one test downgrades and re-upgrades the schema) |
+
+Both are owned by role `darwin`, which cannot create roles or databases and is not a superuser.
+
+### Migrations (Alembic)
+
+```
+Python model (darwin/db/models/user_event.py)
+      │  describes the table
+      ▼
+Migration (alembic/versions/0001_create_user_event.py)
+      │  explicit, reviewed, versioned change
+      ▼
+SQL DDL (CREATE TABLE user_event ...)      ← see it with `make migrate-sql`
+      │
+      ▼
+PostgreSQL schema (+ alembic_version table recording "0001")
+```
+
+- **Why migrations:** the database outlives every deployment. `create_all()` can only create missing tables — it cannot rename a column, add a constraint to existing data, or undo anything. Migrations are ordered, reviewable, reversible steps, and the `alembic_version` table records which ones a database has.
+- **The app never creates tables.** `Base.metadata.create_all()` is not called anywhere; startup only creates an engine. An integration test proves startup leaves an empty database empty.
+- `alembic/env.py` reads the URL from `darwin.config.Settings`, the same setting the app uses. `alembic.ini` contains no URL.
+- **upgrade** applies migrations forward (`alembic upgrade head`); **downgrade** runs their `downgrade()` functions backwards (`alembic downgrade -1`, or `base` for everything). Downgrades that drop tables destroy data — use them on local databases only.
+
+Creating a future migration (from `backend/`, with PostgreSQL running and `darwin_dev` at head):
+
+```bash
+uv run --env-file ../.env alembic revision --autogenerate -m "describe the change"
+```
+
+Then **read the generated file** (autogenerate misses some changes and sometimes guesses wrong), run `make migrate`, and run `make test-integration` — `test_migration_matches_the_orm_models` fails if the model and migrations disagree.
+
+### Unit vs. integration tests
+
+| | Unit (`make test`, `make check`) | Integration (`make test-integration`) |
+|---|---|---|
+| Needs PostgreSQL | No — the unit settings point at a closed port | Yes — local `darwin_test` |
+| Examples | settings validation, readiness `503` when the DB is down, sessions closed per request, naive timestamps rejected | insert/query, uniqueness, idempotent `ON CONFLICT DO NOTHING`, check constraints, timestamps, schema shape, migrations, readiness `200` |
+| Speed | Well under a second | A few seconds |
+
+**Safety guard:** integration tests read `DARWIN_TEST_DATABASE_URL` (default `…@localhost:5432/darwin_test`), never `DARWIN_DATABASE_URL`, and `darwin.db.safety.require_local_test_database` refuses any host other than localhost and any database name not ending in `_test` — before a connection is attempted.
+
+### Resetting the local database (LOCAL DEVELOPMENT ONLY)
+
+Destructive: this deletes **all** data in `darwin_dev`.
+
+```bash
+psql -h localhost -d postgres -c "DROP DATABASE darwin_dev WITH (FORCE);"
+```
+
+```bash
+make db-setup
+```
+
+```bash
+make migrate
+```
+
+A lighter option that keeps the database but drops DarwinUX's tables: `cd backend && uv run --env-file ../.env alembic downgrade base && uv run --env-file ../.env alembic upgrade head`.
+
+Deleting the PostgreSQL 17 data directory (`$(brew --prefix)/var/postgresql@17`) would destroy every database on that server, for every project — never do this to reset DarwinUX.
+
+### pgvector (later)
+
+`pgvector` is installed for PostgreSQL 17 but **not enabled**: no `CREATE EXTENSION`, no vector columns. `make db-status` shows it is available. The RAG step will enable it in a migration.
 
 ---
 
@@ -284,4 +421,4 @@ API tests use FastAPI's `TestClient`, which calls the ASGI app in-process — no
 2. **The virtual environment is disposable; the lockfile is not.** You can delete `.venv` any time; `uv sync` recreates it identically.
 3. **Formatter, linter, type checker, and tests catch different classes of problems.** Passing one says nothing about the others.
 4. **`.env.example` is documentation; `.env` is local state.** Secrets live only in `.env` locally and in Secrets Manager in AWS — never in git.
-5. **Local services run in Compose; the application runs on the host at first.** That keeps the edit–run–debug loop fast while dependencies stay reproducible.
+5. **Local services run natively beside the application.** The app runs with `uv run`; PostgreSQL 17 runs as a Homebrew service. Both are reachable on localhost, which keeps the edit–run–debug loop fast.

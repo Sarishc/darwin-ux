@@ -36,9 +36,21 @@ Documents in `docs/`. No code, no dependencies, no infrastructure.
 **Learn:** package layout, ASGI, routers, Pydantic models and settings, dependency direction, liveness vs. readiness, API tests.
 **Exit:** `make check` passes; both endpoints return 200 from a running server.
 
+### Step 2c — PostgreSQL Persistence Foundation
+
+(Built before 2b; in the step-by-step build this is "Step 3".)
+
+- Native Homebrew PostgreSQL 17 + pgvector (installed, not enabled) — no Docker locally.
+- SQLAlchemy 2.x (sync) + psycopg 3; engine and session lifecycle tied to the FastAPI lifespan.
+- Alembic with the first migration (`user_event`); readiness checks the database with `SELECT 1`.
+- Unit tests stay database-free; integration tests run against a guarded `darwin_test`.
+
+**Learn:** engine vs. session vs. transaction, connection pooling, migrations vs. `create_all`, schema constraints, unit vs. integration tests.
+**Exit:** migrations upgrade/downgrade cleanly; readiness is 200 with PostgreSQL up and 503 with it down; integration tests pass.
+
 ### Step 2b — Behavioral Telemetry Pipeline + Generation 0
 
-Prerequisites carried over from the original foundations plan: `compose.yaml` with Postgres + pgvector, a `database` readiness check, CI running `make check`, and minimal OpenTelemetry. Domain models (`UserEvent`, `BehaviorSignal`) are introduced here, together with the behaviour that uses them.
+Prerequisites: the persistence foundation (Step 2c), CI running `make check`, and minimal OpenTelemetry. `BehaviorSignal` is introduced here, together with the behaviour that uses it.
 
 - Demo target app (Next.js `/demo`) rendering from a seeded **UI Spec** via a component registry — Generation 0, with deliberate friction.
 - Telemetry SDK + `POST /api/v1/telemetry/events` (202) → queue emulator → telemetry worker.

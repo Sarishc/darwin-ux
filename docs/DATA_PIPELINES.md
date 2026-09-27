@@ -388,8 +388,8 @@ Experiments do not need a third pipeline. They reuse the telemetry pipeline:
 
 | Concern | Local development | AWS (later) |
 |---|---|---|
-| Queue | SQS-compatible emulator in docker compose (e.g., ElasticMQ or LocalStack) | SQS + DLQ |
-| Database | `pgvector/pgvector` Postgres container | RDS for PostgreSQL with pgvector |
+| Queue | To be decided when the pipeline is built — without Docker (e.g., a native SQS-compatible emulator or a Postgres-backed queue behind the same port) | SQS + DLQ |
+| Database | Native Homebrew PostgreSQL 17 + pgvector | RDS for PostgreSQL 17 with pgvector |
 | Raw documents | Local directory or S3-compatible emulator | S3 |
 | Workers | `python -m darwin.workers <name>` processes | ECS/Fargate services from the same image |
 

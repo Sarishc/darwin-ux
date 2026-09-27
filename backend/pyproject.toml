@@ -4,9 +4,12 @@ version = "0.0.0"
 description = "DarwinUX backend: API, workers, and AI subsystems."
 requires-python = ">=3.13,<3.14"
 dependencies = [
+    "alembic>=1.20.0",
     "fastapi>=0.141.1",
+    "psycopg[binary]>=3.3.6",
     "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
+    "sqlalchemy>=2.1.1,<3",
     "uvicorn>=0.54.0",
 ]
 
@@ -48,10 +51,18 @@ select = [
 python_version = "3.13"
 strict = true
 mypy_path = "src"
+# Name test modules by their path (tests.conftest vs tests.integration.conftest),
+# so the two conftest.py files don't collide.
+explicit_package_bases = true
 # Teaches mypy how Pydantic models/settings construct themselves (field types in __init__).
 plugins = ["pydantic.mypy"]
 
 # ---- pytest: test runner ---------------------------------------------------
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers --import-mode=importlib"
+# Plain `pytest` runs the fast unit suite only. `pytest -m integration`
+# (make test-integration) overrides the marker filter and needs PostgreSQL.
+addopts = "-ra --strict-markers --import-mode=importlib -m 'not integration'"
+markers = [
+    "integration: needs the local PostgreSQL 17 darwin_test database",
+]

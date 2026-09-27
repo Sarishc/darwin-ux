@@ -14,10 +14,13 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from sqlalchemy import make_url
 
 from darwin import __version__
 from darwin.api.router import api_v1_router
 from darwin.config import Settings
+from darwin.db.engine import create_db_engine
+from darwin.db.session import create_session_factory
 from darwin.logging_config import configure_logging
 
 logger = logging.getLogger(__name__)
@@ -27,11 +30,17 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Runs once at server startup (before ``yield``) and once at shutdown (after).
 
-    Connections to external resources (database pools, clients) will be opened
-    here in later steps — never at import time.
+    The database engine (and its connection pool) lives exactly as long as the
+    application. Creating it does not connect, so startup succeeds even if
+    PostgreSQL is down; readiness reports that instead. The schema is NOT
+    created here — that is Alembic's job.
     """
     settings: Settings = app.state.settings
+    engine = create_db_engine(str(settings.database_url))
+    app.state.engine = engine
+    app.state.session_factory = create_session_factory(engine)
     app.state.started = True
+    database = make_url(str(settings.database_url))
     logger.info(
         "application started",
         extra={
@@ -40,11 +49,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 "version": __version__,
                 "env": settings.env,
                 "log_level": settings.log_level,
+                # Where, never how: no user or password in logs.
+                "database": f"{database.host}:{database.port}/{database.database}",
             }
         },
     )
     yield
     app.state.started = False
+    engine.dispose()
     logger.info("application stopped")
 
 

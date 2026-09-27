@@ -12,14 +12,16 @@ It is not a chatbot wrapper. It is a closed-loop system where software evolves t
 
 ## Status
 
-**Step 2 — Python Application Foundation** (Steps 0–1 complete)
+**Step 3 — PostgreSQL Persistence Foundation** (Steps 0–2 complete)
 
-A minimal FastAPI application with liveness/readiness endpoints, settings, structured logging, and tests. No database or AI components yet. To set up a machine and run it, see [DEVELOPMENT.md](docs/DEVELOPMENT.md).
+A FastAPI application with liveness/readiness endpoints, settings, structured logging, and a PostgreSQL 17 persistence layer (SQLAlchemy + Alembic). Local PostgreSQL runs natively via Homebrew — no Docker. No AI components yet. To set up a machine and run it, see [DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ```bash
 make sync   # install locked dependencies
 make api    # http://127.0.0.1:8000/api/v1/health/live
-make check  # format check, lint, type check, tests
+make check  # format check, lint, type check, unit tests
+make db-start && make db-setup && make migrate   # local PostgreSQL 17
+make test-integration
 ```
 
 ## The Evolution Loop

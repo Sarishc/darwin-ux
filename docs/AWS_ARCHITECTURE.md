@@ -4,10 +4,10 @@
 
 ## Principles
 
-1. **Local first.** Every component runs on a laptop via docker compose before it runs on AWS.
+1. **Local first.** Every component runs on a laptop (natively, e.g. Homebrew PostgreSQL 17) before it runs on AWS.
 2. **Managed services over self-hosted,** but only services with a clear job.
 3. **Small bill.** One developer, one environment, a portfolio project. Design choices that cost a fixed monthly fee without a learning or reliability payoff are avoided.
-4. **Same image everywhere.** The backend image built in CI is the one that runs locally in compose, in dev, and (later) in prod.
+4. **Same image everywhere in AWS.** The backend image built in CI is the one that runs in dev and (later) in prod. Local development runs the same code natively with `uv run`.
 
 ## Conceptual Deployment
 

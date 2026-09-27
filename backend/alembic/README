@@ -1,0 +1,5 @@
+Alembic migrations for the DarwinUX backend.
+
+- env.py        reads the database URL from darwin.config.Settings (DARWIN_DATABASE_URL)
+- versions/     one file per schema change, applied in order
+- Commands and workflow: see docs/DEVELOPMENT.md ("Database").
