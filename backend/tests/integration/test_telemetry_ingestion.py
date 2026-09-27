@@ -1,15 +1,12 @@
 """POST /api/v1/telemetry/events against the real darwin_test database.
 
-Isolation: every request gets its own Session on one shared connection whose
-outer transaction is rolled back after the test. The service's own
-`session.begin()` / commit therefore becomes a SAVEPOINT — the real service
-code runs unchanged, and nothing is left behind.
+Isolation: the `api` fixture (conftest.py) gives every request its own Session
+on one shared connection whose outer transaction is rolled back after the test.
 """
 
 import logging
 import threading
 import uuid
-from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
 
@@ -18,11 +15,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Connection, Engine, delete, func, insert, select
 from sqlalchemy.orm import Session
 
-from darwin.config import Settings
 from darwin.db.models import UserEvent
-from darwin.db.session import get_session
 from darwin.logging_config import ROOT_LOGGER_NAME
-from darwin.main import create_app
 from darwin.telemetry.schemas import IngestionResult, TelemetryEvent
 from darwin.telemetry.service import ingest_event
 
@@ -49,19 +43,6 @@ def _rows(connection: Connection, event_id: str) -> list[UserEvent]:
         return list(
             session.scalars(select(UserEvent).where(UserEvent.event_id == uuid.UUID(event_id)))
         )
-
-
-@pytest.fixture
-def api(integration_settings: Settings, connection: Connection) -> Iterator[TestClient]:
-    app = create_app(integration_settings)
-
-    def session_on_test_connection() -> Iterator[Session]:
-        with Session(bind=connection, join_transaction_mode="create_savepoint") as session:
-            yield session
-
-    app.dependency_overrides[get_session] = session_on_test_connection
-    with TestClient(app) as client:
-        yield client
 
 
 # ---- First delivery -------------------------------------------------------------

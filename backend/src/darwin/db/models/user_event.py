@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import CheckConstraint, DateTime, String, func, text
+from sqlalchemy import CheckConstraint, DateTime, Index, String, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, validates
 
@@ -21,6 +21,10 @@ class UserEvent(Base):
     __table_args__ = (
         CheckConstraint("event_type <> ''", name="event_type_not_empty"),
         CheckConstraint("jsonb_typeof(payload) = 'object'", name="payload_is_object"),
+        # Signal reconciliation reads one session's events, ordered by
+        # occurred_at, after every accepted event. Without this index that is a
+        # full-table scan.
+        Index("ix_user_event_session_id_occurred_at", "session_id", "occurred_at"),
     )
 
     # Server-owned identity; other tables will reference this, never client input.

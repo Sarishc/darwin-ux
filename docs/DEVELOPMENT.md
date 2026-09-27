@@ -1,6 +1,6 @@
 # DarwinUX — Development Environment
 
-> **Status (Step 4):** FastAPI application with health endpoints, a telemetry ingestion endpoint (`POST /api/v1/telemetry/events`, synchronous and idempotent), settings, structured logging, a PostgreSQL 17 persistence layer (SQLAlchemy + Alembic, one `user_event` table), unit and integration tests. No queue and no AI components yet.
+> **Status (Step 5):** FastAPI application with health endpoints, a telemetry ingestion endpoint (`POST /api/v1/telemetry/events`, synchronous and idempotent), deterministic behaviour-signal detection (`rage_click`, `error_burst`), settings, structured logging, a PostgreSQL 17 persistence layer (SQLAlchemy + Alembic: `user_event`, `behavior_signal`), unit and integration tests. No queue and no AI components yet.
 
 ## 1. Prerequisites
 
@@ -240,21 +240,25 @@ backend/src/darwin/
 │   └── errors.py      # 422 responses without echoed input values
 ├── telemetry/
 │   ├── schemas.py     # TelemetryEvent (request), IngestionResult (response)
-│   └── service.py     # ingest_event(): the transaction + idempotent insert
+│   └── service.py     # ingest_event() (idempotent insert), process_event() (store, then detect)
+├── signals/
+│   ├── detectors.py   # pure detector functions, thresholds, signal_id derivation
+│   └── service.py     # window query + idempotent BehaviorSignal persistence
 └── db/
     ├── base.py        # DeclarativeBase + constraint naming convention
     ├── engine.py      # create_db_engine(), database_is_available() (SELECT 1)
     ├── session.py     # session factory + request-scoped DbSession dependency
     ├── safety.py      # guard for destructive operations (tests)
     └── models/
-        └── user_event.py
+        ├── user_event.py
+        └── behavior_signal.py
 ```
 
 Outside the package: `backend/alembic/` (migrations), `backend/alembic.ini`, `backend/scripts/local_db_setup.sql`.
 
 Modules are added when there is code for them — no empty `rag/`, `agents/`, or `providers/` directories. There is also no `core/` package: generic names like "core" or "utils" become dumping grounds with no clear place in the dependency rule.
 
-**Dependency direction:** `main` → `api`, `db`, `config`, `logging_config`; `api` → `telemetry`, `db`; `telemetry` → `db`; `logging_config` → `config`. Nothing below `api` imports FastAPI routing, and nothing imports `main`. Nothing imports `main`. This is the start of the layering in ARCHITECTURE.md: the entrypoint wires pieces together; the pieces don't know about the entrypoint.
+**Dependency direction:** `main` → `api`, `db`, `config`, `logging_config`; `api` → `telemetry`, `db`; `telemetry` → `signals`, `db`; `signals` → `db`; `logging_config` → `config`. Nothing below `api` imports FastAPI routing, and nothing imports `main`. Nothing imports `main`. This is the start of the layering in ARCHITECTURE.md: the entrypoint wires pieces together; the pieces don't know about the entrypoint.
 
 ### How a request becomes a response
 
@@ -317,7 +321,8 @@ Readiness has two checks. `startup_complete` is true between lifespan startup an
 | `tests/test_db_unit.py` | Timezone-aware timestamps, per-request sessions closed, test-database guard |
 | `tests/test_telemetry_schemas.py` | The event contract: UUIDs, timezones, event_type rules, payload shape/size/depth, forbidden fields |
 | `tests/test_telemetry_api.py` | 422 before persistence, no echoed input, deep payloads, DB failure → 500 without leaking payload |
-| `tests/integration/` | Real PostgreSQL behaviour — see "12. Database" and "13. Telemetry Ingestion" |
+| `tests/test_signal_detectors.py` | Detector rules: thresholds, windows, isolation, bad payloads, determinism, signal_id stability, incremental = replay |
+| `tests/integration/` | Real PostgreSQL behaviour — see "12. Database", "13. Telemetry Ingestion", "14. Behaviour Signals" |
 | `tests/test_config.py` | Defaults, `DARWIN_` prefix, case-insensitive log level, fail-fast validation, ignoring future variables |
 | `tests/test_logging.py` | JSON output, structured context, robustness, idempotent configuration |
 
@@ -491,7 +496,7 @@ Logged: `event_id`, `event_type`, `status`. Not logged: `payload`, `session_id`,
 
 ### Where a queue will attach
 
-`darwin.telemetry.service.ingest_event` is the boundary. The route calls it and knows nothing about SQL. When SQS arrives, `ingest_event` publishes the validated event instead of inserting it, and a worker runs the same idempotent insert. The URL, request schema, status code, and response shape do not change. See DATA_PIPELINES.md, "Current Implementation vs. Target Design".
+`darwin.telemetry.service.process_event` (store the event, then detect signals) is the boundary. The route calls it and knows nothing about SQL. When SQS arrives, the route publishes the validated event instead, and a worker calls the same `process_event`. The URL, request schema, status code, and response shape do not change. See DATA_PIPELINES.md, "Current Implementation vs. Target Design".
 
 ### Trying it
 
@@ -513,6 +518,49 @@ Send the exact same body twice to see `accepted` then `duplicate`. Integration t
 - The payload limit is enforced after the body is parsed, so a very large request body is still read into memory before it is rejected. A request-body cap belongs at the edge (load balancer / server config) when the service is exposed publicly.
 - No authentication or rate limiting on the endpoint yet.
 - No bound on how far in the past or future `occurred_at` may be.
+
+---
+
+## 14. Behaviour Signals
+
+After an event is stored, DarwinUX runs deterministic detectors over that session's recent history and records any `behavior_signal` rows. Definitions, thresholds, the signal_id formula, and deferred detectors are in DATA_PIPELINES.md ("Behaviour Signal Detection (current)").
+
+| Signal | Fires when |
+|---|---|
+| `rage_click` | 4 `button_click`/`click` events on the same `payload.component` within 2 s, one session |
+| `error_burst` | 3 `client_error`/`form_error` events within 10 s, one session |
+
+- Detection runs in its **own transaction after** the event is committed. If it fails, the event stays stored, the client still gets `202`, and one error line is logged (`signal detection failed; event is stored`, with the error type only). The session's next accepted event re-reconciles the whole session, which repairs it.
+- **Canonical signals are the rows with `superseded_at IS NULL`.** They always equal the detectors' output over the session's full history, whatever order events arrived in. A late event that changes that result supersedes the old row (kept for audit) and adds the new one.
+- Signals are never returned by the API. There is no signal endpoint yet.
+- Replays are safe: identical history gives identical `signal_id`s, `UNIQUE(signal_id)` ignores repeats, and reconciliation is a no-op when nothing changed.
+
+### Trying it
+
+With `make api` running, send four clicks on one component inside two seconds (same `session_id`, fresh `event_id`s):
+
+```bash
+SID=$(uuidgen); for i in 0 1 2 3; do curl -s -X POST http://127.0.0.1:8000/api/v1/telemetry/events -H 'content-type: application/json' -d "{\"event_id\":\"$(uuidgen)\",\"event_type\":\"button_click\",\"session_id\":\"$SID\",\"occurred_at\":\"2026-09-26T17:00:00.${i}Z\",\"payload\":{\"component\":\"signup_submit\"}}"; echo; done
+```
+
+The four clicks are 0.1 s apart (`17:00:00.0Z` … `17:00:00.3Z`), well inside the 2 s window. Sending the same four events again creates nothing new.
+
+### Inspecting signals locally
+
+```bash
+psql -h localhost -U darwin -d darwin_dev -c "SELECT signal_type, detector_version, window_start, window_end, evidence->>'count' AS count, evidence->>'component' AS component, detected_at, superseded_at FROM behavior_signal ORDER BY detected_at DESC LIMIT 20;"
+```
+
+The evidence event ids point back to `user_event.event_id`:
+
+```bash
+psql -h localhost -U darwin -d darwin_dev -c "SELECT e.event_type, e.occurred_at FROM behavior_signal s CROSS JOIN LATERAL jsonb_array_elements_text(s.evidence->'event_ids') AS ids(event_id) JOIN user_event e ON e.event_id = ids.event_id::uuid ORDER BY s.detected_at DESC, e.occurred_at LIMIT 20;"
+```
+
+### Tests
+
+- Detector logic (no database): `cd backend && uv run pytest tests/test_signal_detectors.py`
+- End-to-end with PostgreSQL: `make test-integration` (includes `tests/integration/test_signals.py` and `tests/integration/test_signal_convergence.py` — late arrivals, permutations, concurrency)
 
 ---
 

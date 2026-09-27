@@ -1,8 +1,9 @@
 """Telemetry ingestion: turn one validated event into at most one stored row.
 
-This function is the processing boundary. Today it persists synchronously.
-Later it is where an event is handed to a queue instead; the HTTP route and
-the public schemas do not change (see docs/DATA_PIPELINES.md).
+`process_event` is the processing boundary: store the event, then detect
+signals. Today the HTTP route calls it synchronously. Later the route will
+enqueue the event instead and a worker will call `process_event`; the public
+schemas do not change (see docs/DATA_PIPELINES.md).
 """
 
 import logging
@@ -11,6 +12,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from darwin.db.models import UserEvent
+from darwin.signals.service import reconcile_session_signals
 from darwin.telemetry.schemas import IngestionResult, TelemetryEvent
 
 logger = logging.getLogger(__name__)
@@ -63,4 +65,36 @@ def ingest_event(session: Session, event: TelemetryEvent) -> IngestionResult:
             }
         },
     )
+    return result
+
+
+def process_event(session: Session, event: TelemetryEvent) -> IngestionResult:
+    """Store the event, then reconcile its session's signals in a *separate* transaction.
+
+    The event transaction has already committed when detection starts, so a
+    detector bug or a failed signal insert can never undo a stored event: the
+    failure is logged and the client still gets 202. A failure to store the
+    event itself is *not* caught — the client gets 500 and can retry safely.
+
+    Duplicates skip detection: they add no new history. Every accepted event
+    triggers a full reconciliation of its session, so a detection that failed
+    is repaired by the session's next accepted event.
+    """
+    result = ingest_event(session, event)
+    if result.status != "accepted":
+        return result
+    try:
+        reconcile_session_signals(session, event.session_id)
+    except Exception as error:  # deliberate boundary: detection must not fail ingestion
+        session.rollback()
+        # Error type only: messages can contain values from the event.
+        logger.error(
+            "signal detection failed; event is stored",
+            extra={
+                "context": {
+                    "event_id": str(event.event_id),
+                    "error_type": type(error).__name__,
+                }
+            },
+        )
     return result

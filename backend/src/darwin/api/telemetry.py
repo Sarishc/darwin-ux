@@ -4,7 +4,7 @@ from fastapi import APIRouter, status
 
 from darwin.db.session import DbSession
 from darwin.telemetry.schemas import IngestionResult, TelemetryEvent
-from darwin.telemetry.service import ingest_event
+from darwin.telemetry.service import process_event
 
 router = APIRouter(prefix="/telemetry", tags=["telemetry"])
 
@@ -21,4 +21,4 @@ router = APIRouter(prefix="/telemetry", tags=["telemetry"])
     response_description="The event was accepted (or had already been accepted).",
 )
 def submit_event(event: TelemetryEvent, session: DbSession) -> IngestionResult:
-    return ingest_event(session, event)
+    return process_event(session, event)

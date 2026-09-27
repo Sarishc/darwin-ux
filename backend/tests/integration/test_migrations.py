@@ -27,7 +27,7 @@ def test_database_is_at_the_latest_migration(migrated_engine: Engine, alembic_cf
     with migrated_engine.connect() as connection:
         current = MigrationContext.configure(connection).get_current_revision()
 
-    assert current == head == "0001"
+    assert current == head == "0002"
 
 
 def test_user_event_table_has_the_expected_shape(migrated_engine: Engine) -> None:

@@ -55,7 +55,8 @@ Prerequisites: the persistence foundation (Step 2c), CI running `make check`, an
 - Demo target app (Next.js `/demo`) rendering from a seeded **UI Spec** via a component registry — Generation 0, with deliberate friction.
 - ✅ `POST /api/v1/telemetry/events` (202), validated `TelemetryEvent`, idempotent synchronous persistence (built as "Step 4").
 - Telemetry SDK; move ingestion behind a queue → telemetry worker (the endpoint contract stays the same).
-- Idempotent persistence, windowed deterministic signal detectors, DLQ.
+- ✅ Windowed deterministic signal detectors (`rage_click`, `error_burst`) with replay-safe `BehaviorSignal` persistence (built as "Step 5"). Deferred: abandonment, confusion loop.
+- DLQ (with the queue).
 - First version of the synthetic user simulator.
 
 **Learn:** async processing, queues, idempotency, data pipelines, first Next.js/TypeScript work.

@@ -75,6 +75,8 @@ An interpreted pattern derived from one or more UserEvents.
 
 **Lifecycle:** `detected` → `confirmed` → `investigating` → `resolved` | `dismissed`
 
+**Implemented (Step 5)** as table `behavior_signal` with a leaner shape than sketched above: `id`, `signal_id` (deterministic UUID5, UNIQUE — the replay key), `signal_type`, `detector_version`, `session_id`, `window_start`, `window_end`, `evidence` (event ids + counts), `detected_at`, `superseded_at` (NULL = canonical; set when a late event means the detectors no longer produce the signal — rows are never deleted). One row per detected burst rather than an aggregate per component, so there is no `evidence_count`/`first_seen`/`last_seen`, no `severity` (no real need yet), and no lifecycle `status` (added when the investigation workflow consumes signals).
+
 **Detection is deterministic.** Signals are detected by threshold-based rules (e.g., "3+ rapid clicks on the same element within 2 seconds = rage_click"), not by LLM inference. This is intentional — signal detection must be fast, predictable, and testable with unit tests.
 
 ---

@@ -12,12 +12,15 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from fastapi.testclient import TestClient
 from sqlalchemy import Connection, Engine
 from sqlalchemy.orm import Session
 
 from darwin.config import Settings
 from darwin.db.engine import create_db_engine, database_is_available
 from darwin.db.safety import require_local_test_database
+from darwin.db.session import get_session
+from darwin.main import create_app
 
 DEFAULT_TEST_DATABASE_URL = "postgresql+psycopg://darwin@localhost:5432/darwin_test"
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -86,3 +89,21 @@ def connection(migrated_engine: Engine) -> Iterator[Connection]:
             yield connection
         finally:
             transaction.rollback()
+
+
+@pytest.fixture
+def api(integration_settings: Settings, connection: Connection) -> Iterator[TestClient]:
+    """The real app, with every request's Session bound to the rolled-back `connection`.
+
+    The services' own `session.begin()` / commit become SAVEPOINTs, so the
+    production code runs unchanged and nothing is left in darwin_test.
+    """
+    app = create_app(integration_settings)
+
+    def session_on_test_connection() -> Iterator[Session]:
+        with Session(bind=connection, join_transaction_mode="create_savepoint") as session:
+            yield session
+
+    app.dependency_overrides[get_session] = session_on_test_connection
+    with TestClient(app) as client:
+        yield client

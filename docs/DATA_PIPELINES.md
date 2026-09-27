@@ -26,33 +26,82 @@ Transform raw user interaction events into behavioral signals that can trigger t
 The rest of this section describes the **target** pipeline. What exists today is smaller, and there is **no queue yet**:
 
 ```
-CURRENT (Step 4) — synchronous, one event per request
+CURRENT (Step 5) — synchronous, one event per request
 
 Client ──POST /api/v1/telemetry/events──> FastAPI route (api/telemetry.py)
                                              │ Pydantic: TelemetryEvent (422 if invalid)
                                              ▼
-                                          telemetry.service.ingest_event(session, event)
-                                             │ one transaction:
-                                             │ INSERT ... ON CONFLICT (event_id) DO NOTHING RETURNING id
-                                             ▼
-                                          PostgreSQL user_event ──> 202 {event_id, status: accepted | duplicate}
+                                          telemetry.service.process_event(session, event)
+                                             │
+                                             ├─ transaction 1: ingest_event
+                                             │    INSERT ... ON CONFLICT (event_id) DO NOTHING
+                                             │    ──> user_event            (committed)
+                                             │
+                                             └─ transaction 2 (only if the event is new): reconcile_session_signals
+                                                  per-session advisory lock
+                                                  load the session's full detector-relevant history
+                                                  ──> detectors (pure functions) ──> canonical SignalCandidate[]
+                                                  insert missing (ON CONFLICT signal_id) / un-supersede,
+                                                  mark no-longer-canonical rows superseded_at = now()
+                                                  ──> behavior_signal
+                                                  (a failure here is logged; the event stays stored)
+
+                                          202 {event_id, status: accepted | duplicate}   (signals never in the response)
 
 
 FUTURE — asynchronous
 
-Client ──POST /api/v1/telemetry/events──> FastAPI route (same)
-                                             │ Pydantic: TelemetryEvent (same)
-                                             ▼
-                                          ingest_event(...) now enqueues ──> SQS ──> worker
-                                                                                      │ same idempotent INSERT
-                                                                                      ▼
-                                                                                   user_event ──> signal detection
+Client ──POST /api/v1/telemetry/events──> FastAPI route (same) ──> enqueue ──> SQS
                                           202 {event_id, status: accepted}
+                                                                                 │
+                                                                                 ▼
+                                                                    worker: process_event(session, event)
+                                                                       (the same two transactions)
+                                                                       ──> user_event ──> detectors ──> behavior_signal
 ```
 
-What stays the same when the queue arrives: the URL, the `TelemetryEvent` request schema, the `202` status, and the response shape. What changes: `ingest_event` publishes instead of inserting, the idempotent insert moves into the worker, and the API can no longer know synchronously that an event is a duplicate, so it will generally answer `accepted`. That is why the contract tells clients to treat `accepted` and `duplicate` identically.
+What stays the same when the queue arrives: the URL, the `TelemetryEvent` request schema, the `202` status, and the response shape — and `process_event` itself, which moves from the request path into the worker. What changes: the route enqueues instead of calling `process_event`, and the API can no longer know synchronously that an event is a duplicate, so it will generally answer `accepted`. That is why the contract tells clients to treat `accepted` and `duplicate` identically.
 
-Not built yet: batching, the queue, workers, signal detection, and the SDK.
+Not built yet: batching, the queue, workers, the SDK, and the deferred detectors (below).
+
+### Behaviour Signal Detection (current)
+
+**Why deterministic:** "four clicks within two seconds" is a counting-and-timing question. Rules answer it exactly, cheaply, and reproducibly, and can be unit-tested with explicit timestamps. An LLM would be slower, costlier, and could answer differently for the same events — unusable as the *evidence* layer that later AI stages (hypotheses, Jev, Muse) rely on.
+
+**Detectors** (`darwin/signals/detectors.py`, both version `1`):
+
+| Signal | Rule | Threshold / window | Needs |
+|---|---|---|---|
+| `rage_click` | Same session, same `payload.component`, `event_type` in {`button_click`, `click`} | **4** clicks with first–last ≤ **2 s** | `payload.component`: an identifier-like string (`^[A-Za-z0-9_.:-]{1,128}$`). Missing, wrong type, or free text → the event is skipped |
+| `error_burst` | Same session, `event_type` in {`client_error`, `form_error`} | **3** errors with first–last ≤ **10 s** | Nothing from the payload |
+
+Why 4 and not 3 clicks: a double-click followed by one retry is ordinary; four clicks on one control inside two seconds is not.
+
+**Burst rule:** events are sorted by `(occurred_at, event_id)`. The earliest run of *threshold* consecutive events inside the window is the evidence. After a hit, every following event within one window of the previous one belongs to the same burst and produces no further signal — one frustrated burst is one signal, however many clicks it has.
+
+**Windowing uses `occurred_at`** (the user's timeline), never arrival order, so events that arrive out of order are still detected correctly. Trade-off: client clocks can be wrong, but they are consistent within one session, which is what burst timing needs. `received_at` would measure network timing instead of behaviour.
+
+**Invariant:** for every session, the *canonical* signals (`behavior_signal` rows with `superseded_at IS NULL`) equal `detect_all(<the session's complete event history>)` — regardless of arrival order and of how often detection has run.
+
+**Identity:** `signal_id = uuid5(NAMESPACE, "<signal_type>|v<detector_version>|<session_id>|<scope>|<sorted evidence event_ids>")`, where `scope` is the component for rage clicks and empty for error bursts. Same evidence, same id; `UNIQUE(signal_id)` guarantees one row per id. Changing a detector's rules means bumping its version, which yields new, distinguishable ids.
+
+**Why detection must reconcile, not just insert.** A late event can change the canonical result for a session: landing *before* or *inside* a detected run changes which run is earliest (so the evidence and id change), and landing in the *gap* between two bursts can merge them into one burst (so one signal disappears). A late event *after* a run changes nothing. With insert-only persistence the stale signal would stay, as a second, overlapping signal for one episode. So after each accepted event, `reconcile_session_signals`:
+
+1. takes a transaction-scoped advisory lock for the session (reconciliations of one session never interleave; other sessions are unaffected);
+2. loads the session's **complete** detector-relevant history (not a time window: a burst chains for as long as every gap is within the window, so any fixed window can see a truncated burst — a 12-minute chain of clicks 1.9 s apart is one burst);
+3. runs the detectors → the canonical set;
+4. inserts canonical signals that are missing, clears `superseded_at` on canonical ones that had been superseded, and sets `superseded_at = now()` on stored ones that are no longer canonical.
+
+Only that one session's rows are touched. Nothing is deleted: superseded rows are the audit trail. Running it again changes nothing.
+
+**Scope and cost:** one session's events of the detected types (index `ix_user_event_session_id_occurred_at`) and one session's signals (index `ix_behavior_signal_session_id`); never a whole-table scan. There is **no cap** on the history loaded: truncating would not be canonical, and skipping would leave stale rows looking canonical. **Step 5 favours canonical correctness over bounded per-event work. A later queue/session-finalization worker will improve scaling.** Measured locally: a session with ~10,000 relevant events reconciles in ~150 ms (a POST into it: ~200 ms); visit-length sessions are far smaller.
+
+**Evidence** is compact and payload-free: event ids, count, threshold, window, and the component identifier (rage click) or the error event types (error burst). No `severity` is stored — there is no real need yet, and `count / threshold` is derivable.
+
+**Deferred detectors:**
+- **Confusion loop** (bouncing between two screens): the event contract has no stable screen/view field yet. Inventing one inside `payload` now would bake an unreviewed schema into the detector. Add it together with a defined screen convention.
+- **Abandonment** (started, never finished): detected from the *absence* of a later event, which is only knowable once an observation window has closed. That needs a scheduled job or worker, not a check that runs when an event arrives.
+- **Slow completion:** needs a defined task start/end and a baseline distribution.
 
 ### Flow
 
@@ -175,14 +224,14 @@ Workers poll SQS, process event batches, and detect behavioral signals.
 3. Persist raw events FIRST, idempotently (INSERT ... ON CONFLICT (event_id) DO NOTHING)
 4. For each affected (session, component), run detectors over a time window
    of persisted events — not just the events in this batch:
-   a. Rage click: 3+ clicks on same element within 2 seconds
-   b. Abandonment: Form started but not submitted within session
-   c. Repeated error: Same error 3+ times within session
-   d. Confusion loop: User navigates away and back 3+ times
-   e. Slow completion: Task takes >2σ above mean completion time
+   a. Rage click: 4+ clicks on the same component within 2 seconds   (implemented)
+   b. Error burst: 3+ client/form errors within 10 seconds           (implemented)
+   c. Abandonment: form started but not submitted                     (deferred: needs a closed window)
+   d. Confusion loop: navigating away and back repeatedly             (deferred: needs a screen field)
+   e. Slow completion: task far slower than its baseline              (deferred)
 5. For each detected pattern:
-   a. Upsert BehaviorSignal (same type + component → increment evidence_count, update last_seen)
-   b. Status = detected
+   a. Insert BehaviorSignal with a deterministic signal_id; ON CONFLICT DO NOTHING
+      (see "Behaviour Signal Detection (current)" above)
 6. Commit transaction
 7. Delete SQS messages (acknowledge processing)
 ```
