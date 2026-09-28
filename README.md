@@ -12,7 +12,11 @@ It is not a chatbot wrapper. It is a closed-loop system where software evolves t
 
 ## Status
 
-**Step 15 — Human Approval + Generation Promotion + Rollback** (Steps 0–14 complete)
+**Step 16 — OpenTelemetry Observability + End-to-End Run Tracing** (Steps 0–15 complete)
+
+DarwinUX is now operationally observable, without a vendor account, a collector or Docker. OpenTelemetry traces and metrics (off by default; `console` or `otlp` exporter) cover the API, the durable queue and the worker as ONE trace — the producer's W3C trace context travels in the queue message's own metadata (migration 0012), never in the telemetry payload — plus Product Memory, every LLM call, the research graph (one span per node), decisions, mutations, the sandbox, experiments and promotion/rollback. Span attributes and metric labels pass a strict allowlist: no prompts, model output, Product Memory text, specs, payloads, session ids, reviewer reasons or secrets; ids only as span attributes, never as metric labels. Errors carry a type, never a message. JSON log lines carry `trace_id`/`span_id`. Tracing is best effort: an exporter failing on every export, or an unreachable collector, changes no result. Audit records remain the product truth; traces are ephemeral diagnostics. A 19-case observability contract reports FORBIDDEN_ATTRIBUTE_COUNT = FORBIDDEN_METRIC_LABEL_COUNT = OBSERVABILITY_CAUSED_OPERATION_FAILURE_COUNT = 0.
+
+Step 15 — **Human Approval + Generation Promotion + Rollback**
 
 A candidate can now become a real Generation — but only by explicit human commands, and it can be rolled back just as explicitly. candidate ≠ generation; analysis ≠ approval; approval ≠ promotion. A human reviews an immutable ExperimentAnalysis and records an approval (or rejection) bound to an **evidence hash** over the exact candidate, Step 13 evaluation, completed experiment, analysis report, source generation, target generation and `promotion_policy.v1`. Approval is refused unless every hard gate holds (no overrides): evidence_ready, guardrails ok, zero integrity flags, the latest evidence, a completed experiment, a still-valid provenance chain, a candidate built on the current active generation. Promotion is ONE locked transaction that re-derives the whole gate (TOCTOU), refuses on any evidence change, creates a new immutable `promoted` UI Spec version (the candidate row is never changed), writes a GenerationPromotion record and moves the `active_generation` pointer — database triggers refuse a pointer move without its record, a record without its move, a pointer at a candidate, and duplicate generation numbers. Rollback moves the pointer back to the generation the current one was promoted from; nothing is deleted. `/demo` renders the active generation (bundled Generation 0 whenever the backend cannot say). Telemetry now carries server-verified UI attribution (generation, spec hash, spec version id); signals are `single`, `mixed` or `unknown` (legacy), and mutations fail closed on mixed/mismatched attribution. A 36-case golden set reports UNAUTHORIZED_PROMOTION_COUNT = 0 and INVALID_ROLLBACK_COUNT = 0. No automatic promotion, no automatic rollback, no deployment.
 
@@ -51,6 +55,7 @@ make experiment-analyze EXPERIMENT_ID=… && make experiment-eval   # evidence f
 make generation-bootstrap && make promotion-review ANALYSIS_ID=…     # pointer -> Generation 0; read the evidence
 make promotion-approve ANALYSIS_ID=… REVIEWER=… REASON="…" && make generation-promote APPROVAL_ID=… REVIEWER=… CONFIRM=pricing_signup:1
 make generation-rollback REVIEWER=… REASON="…" CONFIRM=pricing_signup:0 && make promotion-eval
+DARWIN_OTEL_ENABLED=true make api   # console traces (also worker / CLIs); make observability-eval
 make check  # format check, lint, type check, unit tests
 make db-start && make db-setup && make migrate   # local PostgreSQL 17
 make test-integration

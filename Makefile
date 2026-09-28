@@ -20,7 +20,7 @@ PG_LOG = $(shell brew --prefix)/var/log/$(PG_FORMULA).log
 	experiment-create experiment-start experiment-pause experiment-stop experiment-complete \
 	experiment-analyze experiment-show experiment-eval \
 	generation-bootstrap generation-show promotion-review promotion-approve promotion-reject \
-	generation-promote generation-rollback promotion-eval
+	generation-promote generation-rollback promotion-eval observability-eval
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-17s %s\n", $$1, $$2}'
@@ -225,6 +225,11 @@ generation-rollback: ## Roll PAGE= back: REVIEWER= REASON="..." CONFIRM=<page>:<
 
 promotion-eval: ## Golden promotion/rollback eval (rolled back): unauthorized promotions must be 0
 	$(BACKEND) uv run $(ENV_FILE) python -m darwin.generations.evaluation
+
+# ---- Observability (Step 16): OpenTelemetry contract checks; no collector needed ---------
+
+observability-eval: ## Observability contract eval (spans, propagation, redaction, failure containment)
+	$(BACKEND) uv run $(ENV_FILE) python -m darwin.observability.evaluation
 
 test-integration: ## Integration tests against local darwin_test (needs PostgreSQL 17)
 	$(BACKEND) uv run $(ENV_FILE) pytest -m integration

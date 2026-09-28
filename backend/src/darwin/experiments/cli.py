@@ -29,6 +29,7 @@ from darwin.config import Settings
 from darwin.db.engine import create_db_engine
 from darwin.db.models import CandidateEvaluationRun, Experiment, ExperimentAnalysis
 from darwin.logging_config import configure_logging
+from darwin.observability import setup_observability
 
 from .assignment import assign
 from .service import (
@@ -189,6 +190,7 @@ def run(argv: Sequence[str] | None, factory: SessionFactory) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     settings = Settings()
     configure_logging(settings.log_level)
+    setup_observability(settings, "darwin-cli")
     engine = create_db_engine(str(settings.database_url))
     try:
         return run(argv, sessionmaker(engine))

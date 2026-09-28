@@ -26,6 +26,8 @@ from darwin.config import Settings
 from darwin.db.engine import create_db_engine
 from darwin.db.session import create_session_factory
 from darwin.logging_config import configure_logging
+from darwin.observability import setup_observability
+from darwin.observability.http import TracingMiddleware
 from darwin.queue.postgres import PostgresQueue
 
 logger = logging.getLogger(__name__)
@@ -74,6 +76,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     """Build a new application. Tests pass explicit settings; production reads the environment."""
     settings = settings if settings is not None else Settings()
     configure_logging(settings.log_level)
+    setup_observability(settings, "darwin-api")  # off by default; never blocks startup
 
     app = FastAPI(title=settings.app_name, version=__version__, lifespan=lifespan)
     app.state.settings = settings
@@ -91,6 +94,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         max_age=600,
     )
     app.include_router(api_v1_router)
+    # Outermost: the span covers routing, validation (422s) and the handler.
+    app.add_middleware(TracingMiddleware, templates=lambda: list(app.openapi()["paths"]))
     return app
 
 

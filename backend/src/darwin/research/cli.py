@@ -27,6 +27,7 @@ from darwin.hypotheses.service import SessionFactory, SignalNotFoundError
 from darwin.llm.fake import CRITIQUE_MODES, FAKE_MODES, CritiqueMode, FakeLLMProvider, FakeMode
 from darwin.logging_config import configure_logging
 from darwin.memory.embeddings import HashingEmbeddingProvider
+from darwin.observability import setup_observability
 
 from .service import (
     InvalidDecisionError,
@@ -83,6 +84,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     settings = Settings()
     configure_logging(settings.log_level)
+    setup_observability(settings, "darwin-cli")
     engine = create_db_engine(str(settings.database_url))
     factory = sessionmaker(engine)
     try:

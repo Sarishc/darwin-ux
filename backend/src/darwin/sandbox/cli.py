@@ -20,6 +20,7 @@ from darwin.config import Settings
 from darwin.db.engine import create_db_engine
 from darwin.db.models import UISpecVersion
 from darwin.logging_config import configure_logging
+from darwin.observability import setup_observability
 
 from .policy import CATEGORY_ORDER, EVALUATOR_VERSION
 from .provenance import CandidateNotFoundError
@@ -33,6 +34,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     settings = Settings()
     configure_logging(settings.log_level)
+    setup_observability(settings, "darwin-cli")
     engine = create_db_engine(str(settings.database_url))
     factory = sessionmaker(engine)
     try:

@@ -1,0 +1,191 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "telemetry_api_spans",
+      "scenario": "telemetry_api_spans",
+      "description": "The telemetry API creates a SERVER span named by route template, with ingest and enqueue children; health is not traced; no URL or query.",
+      "expected_checks": [
+        "accepted_202",
+        "server_span_uses_route_template",
+        "ingest_child_of_server",
+        "enqueue_child_of_ingest",
+        "enqueue_result_recorded",
+        "health_not_traced",
+        "no_url_or_query"
+      ]
+    },
+    {
+      "id": "validation_error_traced",
+      "scenario": "telemetry_api_spans",
+      "description": "A 422 validation failure is visible on the HTTP span (status code only).",
+      "expected_checks": [
+        "validation_422_traced"
+      ]
+    },
+    {
+      "id": "queue_context_propagates",
+      "scenario": "queue_context_propagates",
+      "description": "The API's trace context is stored as queue metadata (not in the payload) and the worker continues that trace.",
+      "expected_checks": [
+        "traceparent_stored_as_metadata",
+        "not_in_payload",
+        "worker_same_trace",
+        "worker_marked_continued"
+      ]
+    },
+    {
+      "id": "worker_parented_correctly",
+      "scenario": "queue_context_propagates",
+      "description": "worker.process is a child of queue.enqueue; persistence and reconciliation are its children.",
+      "expected_checks": [
+        "worker_parent_is_enqueue",
+        "persist_and_reconcile_children"
+      ]
+    },
+    {
+      "id": "invalid_traceparent_ignored",
+      "scenario": "invalid_traceparent_ignored",
+      "description": "A malformed stored trace context never breaks processing: a fresh trace is started and marked invalid.",
+      "expected_checks": [
+        "processed",
+        "fresh_trace",
+        "marked_invalid"
+      ]
+    },
+    {
+      "id": "retry_observable",
+      "scenario": "retry_and_dead_observable",
+      "description": "A failed delivery is a retry span (attempt 1); the redelivery is attempt 2 in the same trace.",
+      "expected_checks": [
+        "outcomes",
+        "retry_observable",
+        "redelivery_same_trace_higher_attempt"
+      ]
+    },
+    {
+      "id": "dead_message_observable",
+      "scenario": "retry_and_dead_observable",
+      "description": "A permanent failure is visible as a dead outcome.",
+      "expected_checks": [
+        "dead_observable"
+      ]
+    },
+    {
+      "id": "errors_are_categories_only",
+      "scenario": "retry_and_dead_observable",
+      "description": "Errors carry a bounded category; exception messages (here a connection string) and exception events are never exported.",
+      "expected_checks": [
+        "error_is_category_only",
+        "no_exception_events"
+      ]
+    },
+    {
+      "id": "research_node_spans",
+      "scenario": "research_llm_retrieval_spans",
+      "description": "A research run has one span per graph node under the run span, with ordered sequence counters and budgets.",
+      "expected_checks": [
+        "research_run_span",
+        "node_spans_under_run",
+        "node_names",
+        "sequence_counters"
+      ]
+    },
+    {
+      "id": "retrieval_span_without_query_text",
+      "scenario": "research_llm_retrieval_spans",
+      "description": "memory.retrieve records counts and provider, never the query (a sentinel query is scanned for).",
+      "expected_checks": [
+        "retrieval_counts_no_text"
+      ]
+    },
+    {
+      "id": "llm_span_tokens_without_prompt",
+      "scenario": "research_llm_retrieval_spans",
+      "description": "llm.generate records provider, model and token counts, never the prompt or output (sentinel evidence scanned for).",
+      "expected_checks": [
+        "llm_tokens_present"
+      ]
+    },
+    {
+      "id": "decision_mutation_sandbox_spans",
+      "scenario": "decision_mutation_sandbox_spans",
+      "description": "decision.run, mutation.generate (operation count, no values) and sandbox.evaluate (recommendation, category statuses) are traced.",
+      "expected_checks": [
+        "decision_span",
+        "mutation_span_counts_not_values",
+        "sandbox_recommendation",
+        "harness_child_span"
+      ]
+    },
+    {
+      "id": "experiment_spans_without_session",
+      "scenario": "experiment_and_promotion_spans",
+      "description": "experiment.analyze, experiment.transition and experiment.assign are traced; no session id appears anywhere.",
+      "expected_checks": [
+        "analysis_span",
+        "assign_span_no_session",
+        "transitions_traced"
+      ]
+    },
+    {
+      "id": "promotion_spans_without_reason",
+      "scenario": "experiment_and_promotion_spans",
+      "description": "Promotion and rollback spans carry generation numbers, never the reviewer or the reason (sentinels scanned for).",
+      "expected_checks": [
+        "promote_generations",
+        "rollback_generations",
+        "decide_span"
+      ]
+    },
+    {
+      "id": "logs_carry_trace_ids",
+      "scenario": "log_correlation",
+      "description": "JSON log lines carry the active span's trace_id/span_id, and omit them outside a span.",
+      "expected_checks": [
+        "ids_inside_span",
+        "absent_outside_span",
+        "ids_match_exported_span"
+      ]
+    },
+    {
+      "id": "disabled_mode_no_spans",
+      "scenario": "disabled_mode_no_spans",
+      "description": "Disabled (the default): operations work, no span context exists, no trace context is stored.",
+      "expected_checks": [
+        "disabled",
+        "operation_ok",
+        "no_span_context",
+        "no_traceparent_stored"
+      ]
+    },
+    {
+      "id": "sampling_zero_no_spans",
+      "scenario": "sampling_zero_no_spans",
+      "description": "Sample ratio 0: no application spans are exported, operations work, metrics are still recorded.",
+      "expected_checks": [
+        "operation_ok",
+        "no_spans_exported",
+        "metrics_still_recorded"
+      ]
+    },
+    {
+      "id": "exporter_failure_contained",
+      "scenario": "exporter_failure_contained",
+      "description": "An exporter that fails on every export changes no operation result (API, worker, research).",
+      "expected_checks": [
+        "exporter_really_failed",
+        "same_results"
+      ]
+    },
+    {
+      "id": "otlp_unreachable_contained",
+      "scenario": "otlp_unreachable_contained",
+      "description": "OTLP configured to an unreachable endpoint: setup succeeds and operations still succeed.",
+      "expected_checks": [
+        "setup_did_not_fail",
+        "operations_ok"
+      ]
+    }
+  ]
+}

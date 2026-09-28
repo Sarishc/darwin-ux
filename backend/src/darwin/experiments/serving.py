@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 from darwin.db.models import Experiment, UISpecVersion
 from darwin.generations.active import active_spec
 from darwin.mutations.apply import content_hash
+from darwin.observability import stage
 
 from .assignment import assign
 from .vocabulary import FallbackReason, Variant
@@ -56,6 +57,22 @@ def _fallback(key: str, reason: FallbackReason) -> Served:
 
 
 def resolve_variant(session: Session, session_id: uuid.UUID, page_id: str) -> Served:
+    """Traced as `experiment.assign`: served status, variant, allocation, fallback reason —
+    never the session id and never the spec."""
+    with stage("experiment.assign", "experiment_assign", {"darwin.page": page_id}) as s:
+        served = _resolve_variant(session, session_id, page_id)
+        s.set(
+            **{
+                "darwin.status": served.status,
+                "darwin.variant": served.variant,
+                "darwin.error.type": served.reason,
+            }
+        )
+        s.outcome = served.variant or served.status
+        return served
+
+
+def _resolve_variant(session: Session, session_id: uuid.UUID, page_id: str) -> Served:
     experiment = session.scalar(
         select(Experiment).where(Experiment.page_id == page_id, Experiment.status == "running")
     )

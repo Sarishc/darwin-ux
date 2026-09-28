@@ -31,6 +31,9 @@ class OutgoingMessage:
     message_id: uuid.UUID
     message_type: str
     body: dict[str, Any]  # JSON-compatible
+    # W3C trace context of the producer: operational metadata, never inside `body`.
+    traceparent: str | None = None
+    tracestate: str | None = None
 
 
 @dataclass(frozen=True)
@@ -40,6 +43,8 @@ class ReceivedMessage:
     body: dict[str, Any]
     attempt: int  # 1 on first delivery
     receipt_handle: uuid.UUID  # identifies this delivery (its lease)
+    traceparent: str | None = None  # as stored; the worker re-validates before use
+    tracestate: str | None = None
 
 
 class MessageQueue(Protocol):

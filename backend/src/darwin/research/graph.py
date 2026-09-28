@@ -49,6 +49,7 @@ from darwin.hypotheses.service import SessionFactory, call_provider, generate_fr
 from darwin.llm.port import LLMProvider
 from darwin.memory.embeddings import EmbeddingProvider
 from darwin.memory.retrieval import RetrievalFilters, retrieve
+from darwin.observability import span
 
 from .budget import ResearchBudget
 from .critique import CRITIQUE_REQUEST_VERSION, build_critique_request, check_critique
@@ -395,6 +396,27 @@ def _ledgered(name: str, fn: NodeFn, deps: ResearchDeps) -> Any:  # a LangGraph 
     allowed = TRANSITIONS[name]
 
     def node(state: ResearchState) -> dict[str, Any]:
+        # One span per node execution (loops appear as repeated spans); ids and counters
+        # only — never the state, the query, retrieved text or model output.
+        with span(
+            "research.node",
+            {
+                "darwin.research.node": name,
+                "darwin.research_run.id": state.get("research_run_id"),
+                "darwin.research.sequence": state.get("steps", 0) + 1,
+            },
+        ) as s:
+            output = _run_node(state)
+            s.set(
+                **{
+                    "darwin.outcome": output.pop("_outcome"),
+                    "darwin.research.retrieval_attempts": output.pop("_retrievals"),
+                    "darwin.research.llm_calls": output.pop("_llm_calls"),
+                }
+            )
+            return output
+
+    def _run_node(state: ResearchState) -> dict[str, Any]:
         result = fn(state, deps)
         updates = dict(result.updates)
         steps = state.get("steps", 0) + 1
@@ -424,7 +446,14 @@ def _ledgered(name: str, fn: NodeFn, deps: ResearchDeps) -> Any:  # a LangGraph 
                 }
             },
         )
-        return {**updates, "steps": steps, "trajectory": [name]}
+        return {
+            **updates,
+            "steps": steps,
+            "trajectory": [name],
+            "_outcome": result.outcome,
+            "_retrievals": merged.get("retrieval_attempts", 0),
+            "_llm_calls": merged.get("llm_calls", 0),
+        }
 
     return node
 

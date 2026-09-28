@@ -25,6 +25,7 @@ from darwin.db.engine import create_db_engine
 from darwin.db.models import DecisionRun, UISpecVersion
 from darwin.llm.fake import MUTATION_MODES, FakeLLMProvider, MutationMode
 from darwin.logging_config import configure_logging
+from darwin.observability import setup_observability
 
 from .fixture import FIXTURE_MODES, FixtureMode, FixtureMutationGenerator
 from .frontend import FrontendValidatorUnavailableError, validate_with_frontend
@@ -71,6 +72,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     settings = Settings()
     configure_logging(settings.log_level)
+    setup_observability(settings, "darwin-cli")
     try:
         generator = make_generator(
             args.generator, cast(FixtureMode, args.fixture_mode), cast(MutationMode, args.llm_mode)

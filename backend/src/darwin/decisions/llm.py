@@ -19,6 +19,7 @@ from darwin.llm.port import (
     ProviderUnavailableError,
     StructuredGenerationRequest,
 )
+from darwin.llm.traced import generate_structured
 
 from .port import DeciderFailureError, DeciderReply, DeciderTimeoutError, DeciderUnavailableError
 from .request import DecisionRequest
@@ -107,7 +108,7 @@ class LLMDecider:
 
     def decide(self, request: DecisionRequest) -> DeciderReply:
         try:
-            result = self.llm.generate_structured(build_decision_llm_request(request))
+            result = generate_structured(self.llm, build_decision_llm_request(request))
         except ProviderUnavailableError as error:
             raise DeciderUnavailableError("llm provider unavailable") from error
         except ProviderTimeoutError as error:

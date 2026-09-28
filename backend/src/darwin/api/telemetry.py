@@ -8,9 +8,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, status
 
+from darwin.observability import span
 from darwin.queue.base import MessageQueue
 from darwin.telemetry.schemas import IngestionResult, TelemetryEvent
-from darwin.telemetry.service import enqueue_event
+from darwin.telemetry.service import bounded_event_type, enqueue_event
 
 router = APIRouter(prefix="/telemetry", tags=["telemetry"])
 
@@ -37,4 +38,6 @@ Queue = Annotated[MessageQueue, Depends(get_queue)]
     response_description="The event is queued (or had already been accepted).",
 )
 def submit_event(event: TelemetryEvent, queue: Queue) -> IngestionResult:
-    return enqueue_event(queue, event)
+    # Validation already passed (FastAPI); the HTTP span records any 422. No payload here.
+    with span("telemetry.ingest", {"darwin.event.type": bounded_event_type(event.event_type)}):
+        return enqueue_event(queue, event)

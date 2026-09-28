@@ -20,6 +20,7 @@ from darwin.db.models.queue_message import (
     PENDING,
     QueueMessage,
 )
+from darwin.observability.propagation import valid_traceparent, valid_tracestate
 from darwin.queue.base import OutgoingMessage, ReceivedMessage
 
 
@@ -38,12 +39,16 @@ class PostgresQueue:
         with a fresh attempt budget (`True`). The original body is kept: the
         first submission wins.
         """
+        traceparent = valid_traceparent(message.traceparent)
+        tracestate = valid_tracestate(message.tracestate) if traceparent else None
         statement = (
             insert(QueueMessage)
             .values(
                 message_id=message.message_id,
                 message_type=message.message_type,
                 body=message.body,
+                traceparent=traceparent,
+                tracestate=tracestate,
             )
             .on_conflict_do_update(
                 index_elements=[QueueMessage.message_id],
@@ -53,6 +58,9 @@ class PostgresQueue:
                     "visible_at": func.now(),
                     "receipt_handle": None,
                     "finished_at": None,
+                    # A resubmission is a new operation: it carries its own trace context.
+                    "traceparent": traceparent,
+                    "tracestate": tracestate,
                 },
                 where=QueueMessage.status == DEAD,
             )
@@ -97,14 +105,18 @@ class PostgresQueue:
                 QueueMessage.message_type,
                 QueueMessage.body,
                 QueueMessage.attempts,
+                QueueMessage.traceparent,
+                QueueMessage.tracestate,
             )
         )
         with self._session_factory() as session, session.begin():
             row = session.execute(statement).one_or_none()
         if row is None:
             return None
-        message_id, message_type, body, attempts = row
-        return ReceivedMessage(message_id, message_type, body, attempts, receipt)
+        message_id, message_type, body, attempts, traceparent, tracestate = row
+        return ReceivedMessage(
+            message_id, message_type, body, attempts, receipt, traceparent, tracestate
+        )
 
     def _finish(self, message: ReceivedMessage, **values: object) -> bool:
         """Apply a state change only if `message` still holds the current lease."""

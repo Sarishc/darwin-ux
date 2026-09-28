@@ -24,6 +24,7 @@ from darwin.config import Settings
 from darwin.db.engine import create_db_engine
 from darwin.db.models.knowledge import KnowledgeChunk, KnowledgeDocument, RetrievalRun
 from darwin.memory.embeddings import EmbeddingProvider, HashingEmbeddingProvider, require_dimension
+from darwin.observability import stage
 
 MAX_TOP_K = 50
 
@@ -80,7 +81,31 @@ def retrieve(
     filters: RetrievalFilters | None = None,
     record: bool = False,
 ) -> list[RetrievedChunk]:
-    """Top-k chunks for `query`. Read-only unless `record=True` (persists a RetrievalRun)."""
+    """Top-k chunks for `query`. Read-only unless `record=True` (persists a RetrievalRun).
+
+    Traced as `memory.retrieve` (provider, top_k, source-type filter, result count) —
+    never the query text or any chunk text.
+    """
+    attributes = {
+        "darwin.embedding.provider": getattr(provider, "name", "unknown"),
+        "darwin.memory.top_k": top_k,
+        "darwin.memory.source_type": (filters.source_type if filters else None),
+    }
+    with stage("memory.retrieve", "memory_retrieve", attributes) as s:
+        results = _retrieve(session, provider, query, top_k, filters, record)
+        s.set(**{"darwin.memory.result_count": len(results)})
+        s.outcome = "ok" if results else "empty"
+        return results
+
+
+def _retrieve(
+    session: Session,
+    provider: EmbeddingProvider,
+    query: str,
+    top_k: int,
+    filters: RetrievalFilters | None,
+    record: bool,
+) -> list[RetrievedChunk]:
     if not 1 <= top_k <= MAX_TOP_K:
         raise ValueError(f"top_k must be between 1 and {MAX_TOP_K}")
     require_dimension(provider)

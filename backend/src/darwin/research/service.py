@@ -43,6 +43,7 @@ from darwin.llm.port import (
     StructuredGenerationResult,
 )
 from darwin.memory.embeddings import EmbeddingProvider
+from darwin.observability import stage
 
 from .budget import HARD_MAX_GRAPH_STEPS, ResearchBudget
 from .graph import GRAPH_VERSION, ResearchDeps, build_graph
@@ -138,6 +139,32 @@ def load_outcome(session_factory: SessionFactory, run_id: uuid.UUID) -> Research
 
 
 def _invoke(deps: ResearchDeps, run_id: uuid.UUID, state: ResearchState) -> ResearchOutcome:
+    """One graph segment (a run, or a resume after human review), traced as `research.run`.
+
+    The persisted research_step rows stay the complete audit; the span carries only
+    ids, versions, budgets, counters and the final status.
+    """
+    attributes = {
+        "darwin.research_run.id": run_id,
+        "darwin.research.graph_version": GRAPH_VERSION,
+        "darwin.research.max_retrieval_attempts": deps.budget.max_retrieval_attempts,
+        "darwin.research.max_llm_calls": deps.budget.max_llm_calls,
+    }
+    with stage("research.run", "research", attributes) as s:
+        outcome = _invoke_graph(deps, run_id, state)
+        s.set(
+            **{
+                "darwin.status": outcome.status,
+                "darwin.research.stop_reason": outcome.stop_reason,
+                "darwin.research.retrieval_attempts": outcome.retrieval_attempts,
+                "darwin.research.llm_calls": outcome.llm_calls,
+            }
+        )
+        s.outcome = outcome.status
+        return outcome
+
+
+def _invoke_graph(deps: ResearchDeps, run_id: uuid.UUID, state: ResearchState) -> ResearchOutcome:
     graph = build_graph(deps)
     started = time.perf_counter()
     try:

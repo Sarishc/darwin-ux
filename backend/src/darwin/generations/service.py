@@ -37,6 +37,7 @@ from darwin.db.models import (
     UISpecVersion,
 )
 from darwin.mutations.apply import content_hash
+from darwin.observability import stage
 
 from .eligibility import PointerMissingError, review
 from .vocabulary import POLICY_VERSION, REASON_MAX, REVIEWER_PATTERN, Decision
@@ -130,7 +131,31 @@ def decide(
     reviewer: str,
     reason: str,
 ) -> DecisionOutcome:
-    """Record a human decision. `approve` only when the gate has no blocking reason."""
+    """Record a human decision. `approve` only when the gate has no blocking reason.
+
+    Traced as `promotion.decide`: decision, eligibility, target generation. The
+    reviewer and the reason are audit data and never reach traces or metrics.
+    """
+    with stage("promotion.decide", "approval", {"darwin.approval.decision": decision}) as s:
+        outcome = _decide(factory, experiment_analysis_id, decision, reviewer, reason)
+        s.set(
+            **{
+                "darwin.promotion.eligible": not outcome.blocking,
+                "darwin.generation.to": outcome.target_generation,
+                "darwin.promotion.reason": outcome.blocking[0] if outcome.blocking else None,
+            }
+        )
+        s.outcome = "recorded" if outcome.recorded else "refused"
+        return outcome
+
+
+def _decide(
+    factory: SessionFactory,
+    experiment_analysis_id: uuid.UUID,
+    decision: Decision,
+    reviewer: str,
+    reason: str,
+) -> DecisionOutcome:
     reviewer, reason = validate_reviewer(reviewer), validate_reason(reason)
     if decision not in ("approve", "reject"):
         raise GenerationInputError("decision_invalid")
@@ -217,6 +242,34 @@ def promote(
     confirm: str,
     *,
     before_commit: Callable[[Session], Any] | None = None,  # tests: inject a failure
+) -> ChangeOutcome:
+    """Traced as `generation.promote`: page, from/to generation, result, first refusal
+    code. No reviewer, no reason, no spec."""
+    with stage("generation.promote", "promotion") as s:
+        result = _promote(factory, approval_id, reviewer, confirm, before_commit=before_commit)
+        _describe_change(s, result)
+        return result
+
+
+def _describe_change(s: Any, result: "ChangeOutcome") -> None:
+    s.set(
+        **{
+            "darwin.page": result.page_id,
+            "darwin.generation.from": result.from_generation,
+            "darwin.generation.to": result.to_generation,
+            "darwin.promotion.reason": result.reasons[0] if result.reasons else None,
+        }
+    )
+    s.outcome = "changed" if result.changed else "refused"
+
+
+def _promote(
+    factory: SessionFactory,
+    approval_id: uuid.UUID,
+    reviewer: str,
+    confirm: str,
+    *,
+    before_commit: Callable[[Session], Any] | None = None,
 ) -> ChangeOutcome:
     reviewer = validate_reviewer(reviewer)
     with factory() as session:
@@ -348,6 +401,21 @@ def rollback_target(session: Session, pointer: ActiveGeneration) -> UISpecVersio
 
 
 def rollback(
+    factory: SessionFactory,
+    page_id: str,
+    reviewer: str,
+    reason: str,
+    confirm: str,
+    to_generation: int | None = None,
+) -> ChangeOutcome:
+    """Traced as `generation.rollback`: page, from/to generation, result. No reviewer/reason."""
+    with stage("generation.rollback", "rollback") as s:
+        result = _rollback(factory, page_id, reviewer, reason, confirm, to_generation)
+        _describe_change(s, result)
+        return result
+
+
+def _rollback(
     factory: SessionFactory,
     page_id: str,
     reviewer: str,

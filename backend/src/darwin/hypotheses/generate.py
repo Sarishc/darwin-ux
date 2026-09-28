@@ -26,6 +26,7 @@ from darwin.db.models import BehaviorSignal, Hypothesis, HypothesisRun
 from darwin.llm.fake import FAKE_MODES, FakeLLMProvider, FakeMode
 from darwin.logging_config import configure_logging
 from darwin.memory.embeddings import HashingEmbeddingProvider
+from darwin.observability import setup_observability
 
 from .queries import UnsupportedSignalError
 from .service import SignalNotFoundError, generate_hypothesis
@@ -50,6 +51,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     settings = Settings()
     configure_logging(settings.log_level)
+    setup_observability(settings, "darwin-cli")
     engine = create_db_engine(str(settings.database_url))
     factory = sessionmaker(engine)
     try:

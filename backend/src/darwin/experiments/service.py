@@ -27,6 +27,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from darwin.db.models import Experiment, ExperimentAnalysis
+from darwin.observability import stage
 
 from .analysis import collect
 from .eligibility import ExperimentRefused, check_eligibility, start_gate, validate_config
@@ -152,6 +153,20 @@ def _load(session: Session, experiment_id: uuid.UUID) -> Experiment:
 def start_experiment(
     factory: SessionFactory, experiment_id: uuid.UUID, at: datetime | None = None
 ) -> TransitionOutcome:
+    with stage(
+        "experiment.transition",
+        "experiment_transition",
+        {"darwin.experiment.id": experiment_id, "darwin.experiment.transition": "start"},
+    ) as s:
+        result = _start_experiment(factory, experiment_id, at)
+        s.set(**{"darwin.experiment.status": result.status})
+        s.outcome = "changed" if result.changed else "refused"
+        return result
+
+
+def _start_experiment(
+    factory: SessionFactory, experiment_id: uuid.UUID, at: datetime | None = None
+) -> TransitionOutcome:
     """draft|paused -> running, only if every start-gate check passes. Opens a collection window."""
     with factory() as session:
         experiment = _load(session, experiment_id)
@@ -179,6 +194,24 @@ def start_experiment(
 
 
 def _move(
+    factory: SessionFactory,
+    experiment_id: uuid.UUID,
+    target: str,
+    stop_reason: str | None = None,
+    at: datetime | None = None,
+) -> TransitionOutcome:
+    with stage(
+        "experiment.transition",
+        "experiment_transition",
+        {"darwin.experiment.id": experiment_id, "darwin.experiment.transition": target},
+    ) as s:
+        result = _move_now(factory, experiment_id, target, stop_reason, at)
+        s.set(**{"darwin.experiment.status": result.status})
+        s.outcome = "changed" if result.changed else "refused"
+        return result
+
+
+def _move_now(
     factory: SessionFactory,
     experiment_id: uuid.UUID,
     target: str,
@@ -270,7 +303,32 @@ def analyze_experiment(
     *,
     fault: Callable[[], None] | None = None,  # tests/eval: simulate an analysis failure
 ) -> AnalysisOutcome:
-    """Compute and persist one immutable analysis. Errors are recorded, never hidden."""
+    """Compute and persist one immutable analysis. Errors are recorded, never hidden.
+
+    Traced as `experiment.analyze`: status, assessment — never the report, counts per
+    session or ids of sessions.
+    """
+    with stage(
+        "experiment.analyze", "experiment_analysis", {"darwin.experiment.id": experiment_id}
+    ) as s:
+        outcome = _analyze_experiment(factory, experiment_id, as_of, fault=fault)
+        s.set(
+            **{
+                "darwin.status": outcome.status,
+                "darwin.experiment.assessment": outcome.assessment,
+            }
+        )
+        s.outcome = outcome.assessment
+        return outcome
+
+
+def _analyze_experiment(
+    factory: SessionFactory,
+    experiment_id: uuid.UUID,
+    as_of: datetime | None = None,
+    *,
+    fault: Callable[[], None] | None = None,
+) -> AnalysisOutcome:
     as_of = (as_of or datetime.now(UTC)).astimezone(UTC)
     with factory() as session:
         experiment = session.get(Experiment, experiment_id)

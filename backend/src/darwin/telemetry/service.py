@@ -15,6 +15,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from opentelemetry.trace import SpanKind
 from pydantic import ValidationError
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
@@ -22,6 +23,7 @@ from sqlalchemy.orm import Session
 from darwin.db.models import UISpecVersion, UserEvent
 from darwin.experiments.exposure import ExposureResult, record_exposure
 from darwin.experiments.vocabulary import EXPOSURE_EVENT
+from darwin.observability import bounded, inject_current, record, span
 from darwin.queue.base import MessageQueue, OutgoingMessage, PermanentMessageError
 from darwin.signals.service import ReconcileResult, reconcile_session_signals
 from darwin.telemetry.messages import TELEMETRY_EVENT, TelemetryMessageV2, parse_message
@@ -33,6 +35,25 @@ logger = logging.getLogger(__name__)
 # ---- Producer ----------------------------------------------------------------------
 
 
+# Client event types are an OPEN vocabulary (any snake_case name); traces and metrics
+# only ever see these, everything else is "other".
+KNOWN_EVENT_TYPES = frozenset(
+    {
+        "page_view",
+        "button_click",
+        "click",
+        "form_error",
+        "client_error",
+        "experiment_exposure",
+        "experiment_fallback",
+    }
+)
+
+
+def bounded_event_type(event_type: str) -> str:
+    return bounded(event_type, KNOWN_EVENT_TYPES)
+
+
 def enqueue_event(queue: MessageQueue, event: TelemetryEvent) -> IngestionResult:
     """Durably queue the event for asynchronous processing.
 
@@ -40,12 +61,28 @@ def enqueue_event(queue: MessageQueue, event: TelemetryEvent) -> IngestionResult
     resubmission a no-op: `accepted` = newly queued, `duplicate` = this event_id
     was already accepted earlier (queued, being processed, or processed).
     """
-    is_new = queue.enqueue(
-        OutgoingMessage(
-            message_id=event.event_id,
-            message_type=TELEMETRY_EVENT,
-            body=TelemetryMessageV2.from_event(event).to_body(),
+    with span(
+        "queue.enqueue",
+        {"messaging.system": "darwin.postgres_queue", "darwin.message.type": TELEMETRY_EVENT},
+        kind=SpanKind.PRODUCER,
+    ) as s:
+        # The trace context goes into the message's own metadata, not its body.
+        traceparent, tracestate = inject_current()
+        is_new = queue.enqueue(
+            OutgoingMessage(
+                message_id=event.event_id,
+                message_type=TELEMETRY_EVENT,
+                body=TelemetryMessageV2.from_event(event).to_body(),
+                traceparent=traceparent,
+                tracestate=tracestate,
+            )
         )
+        s.set(**{"darwin.queue.result": "accepted" if is_new else "duplicate"})
+    record(
+        "darwin.queue.enqueued",
+        1,
+        message_type=TELEMETRY_EVENT,
+        result="accepted" if is_new else "duplicate",
     )
     result = IngestionResult(event_id=event.event_id, status="accepted" if is_new else "duplicate")
     logger.info(
@@ -170,7 +207,34 @@ def process_telemetry_message(session: Session, body: dict[str, Any]) -> Telemet
         event = parse_message(body)
     except ValidationError as error:
         raise PermanentMessageError(_describe(error)) from None
-    stored = ingest_event(session, event)
-    signals = reconcile_session_signals(session, event.session_id)
-    exposure = record_exposure(session, event) if event.event_type == EXPOSURE_EVENT else None
+    event_type = bounded_event_type(event.event_type)
+    with span("telemetry.persist", {"darwin.event.type": event_type}) as s:
+        stored = ingest_event(session, event)
+        s.set(
+            **{
+                "darwin.ingest.result": stored.status,
+                "darwin.ui.attribution": "claimed"
+                if event.ui_spec_version_id is not None
+                else "none",
+            }
+        )
+    with span("signals.reconcile") as s:
+        signals = reconcile_session_signals(session, event.session_id)
+        s.set(
+            **{
+                "darwin.signals.canonical": signals.canonical,
+                "darwin.signals.created": signals.created,
+                "darwin.signals.superseded": signals.superseded,
+            }
+        )
+    exposure = None
+    if event.event_type == EXPOSURE_EVENT:
+        with span("experiment.record_exposure") as s:
+            exposure = record_exposure(session, event)
+            s.set(
+                **{
+                    "darwin.exposure.result": exposure.status,
+                    "darwin.exposure.reason": exposure.reason,
+                }
+            )
     return TelemetryOutcome(stored=stored, signals=signals, exposure=exposure)

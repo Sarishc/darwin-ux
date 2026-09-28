@@ -25,6 +25,7 @@ from darwin.db.engine import create_db_engine
 from darwin.db.models import ResearchRun
 from darwin.llm.fake import DECISION_MODES, DecisionMode, FakeLLMProvider
 from darwin.logging_config import configure_logging
+from darwin.observability import setup_observability
 
 from .fake import FAKE_DECIDER_MODES, FakeDecider, FakeDeciderMode
 from .jev import JevAdapter, JevNotConfiguredError
@@ -75,6 +76,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     settings = Settings()
     configure_logging(settings.log_level)
+    setup_observability(settings, "darwin-cli")
     try:
         decider = make_decider(
             args.decider,

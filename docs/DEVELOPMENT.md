@@ -1,6 +1,6 @@
 # DarwinUX — Development Environment
 
-> **Status (Step 15):** human approval + generation promotion + rollback (promotion_policy.v1 gate → immutable approval with an evidence hash → explicit CLI promotion: one locked transaction, re-validated, new promoted UI Spec version + audit record + pointer move → explicit CLI rollback; `/demo` renders the active generation; server-verified telemetry UI attribution; no automatic promotion or rollback); controlled experiments (Step 13 pass re-derived → human-created draft → explicit CLI start after a start gate → stable-hash assignment served by the backend → exposure only after a successful render, idempotent, via the telemetry pipeline → Wilson / Newcombe analysis → immutable `experiment_analysis`; no winner, no promotion; `/demo/experiment`); candidate sandbox evaluation (real Zod schema + registry + SpecPage in a jsdom harness; seven separate categories; deterministic `candidate_eval.v1` policy; immutable `candidate_evaluation_run`); candidate mutations (proceed decision → provenance re-check → MutationGenerator: fixture / LLM-port baseline / unimplemented Muse seam → strict MutationSpec → in-memory apply + protected diff → immutable `ui_spec_version` candidate, Zod-checked; `mutation_run`); a decision gate after research (Decider port: `rules.v1`, a test double, an LLM-port baseline, a Jev adapter not yet called live; fail-closed policy; `decision_run`); a bounded LangGraph research workflow (retrieval → sufficiency heuristic → ≤ 1 refinement → Step 9 hypothesis → critique → accept / human review via CLI resume / reject / stop; `research_run` / `research_step`); hypothesis generation (signal → Product Memory evidence → one structured call through an LLM port → strict validation → `hypothesis_run` / `hypothesis`; deterministic `FakeLLMProvider` only); Product Memory (retrieval only: allowlisted docs → chunks → embeddings in pgvector → filtered vector search → golden-set evaluation); a Next.js demo app (`/demo`, Generation 0) rendered from a validated UI Spec, with a browser telemetry SDK; the FastAPI *producer*; a separate worker (*consumer*) connected by a durable PostgreSQL-backed queue; deterministic behaviour signals; PostgreSQL 17 (telemetry, signals, queue, Product Memory, hypotheses, research runs, decisions, UI Spec versions, mutation runs, candidate evaluations, experiments, exposures, analyses); backend and frontend tests. No Docker, no AWS, no real LLM provider, no live Jev call, no Muse interface, no browser-based checks, no automatic promotion or rollback, no authentication, no deployment yet.
+> **Status (Step 16):** OpenTelemetry observability (off by default; console or OTLP exporter; one trace API → queue → worker via queue metadata; spans across memory, LLM, research, decision, mutation, sandbox, experiments, promotion; bounded metrics; trace-correlated logs; strict attribute/label allowlist; best effort); human approval + generation promotion + rollback (promotion_policy.v1 gate → immutable approval with an evidence hash → explicit CLI promotion: one locked transaction, re-validated, new promoted UI Spec version + audit record + pointer move → explicit CLI rollback; `/demo` renders the active generation; server-verified telemetry UI attribution; no automatic promotion or rollback); controlled experiments (Step 13 pass re-derived → human-created draft → explicit CLI start after a start gate → stable-hash assignment served by the backend → exposure only after a successful render, idempotent, via the telemetry pipeline → Wilson / Newcombe analysis → immutable `experiment_analysis`; no winner, no promotion; `/demo/experiment`); candidate sandbox evaluation (real Zod schema + registry + SpecPage in a jsdom harness; seven separate categories; deterministic `candidate_eval.v1` policy; immutable `candidate_evaluation_run`); candidate mutations (proceed decision → provenance re-check → MutationGenerator: fixture / LLM-port baseline / unimplemented Muse seam → strict MutationSpec → in-memory apply + protected diff → immutable `ui_spec_version` candidate, Zod-checked; `mutation_run`); a decision gate after research (Decider port: `rules.v1`, a test double, an LLM-port baseline, a Jev adapter not yet called live; fail-closed policy; `decision_run`); a bounded LangGraph research workflow (retrieval → sufficiency heuristic → ≤ 1 refinement → Step 9 hypothesis → critique → accept / human review via CLI resume / reject / stop; `research_run` / `research_step`); hypothesis generation (signal → Product Memory evidence → one structured call through an LLM port → strict validation → `hypothesis_run` / `hypothesis`; deterministic `FakeLLMProvider` only); Product Memory (retrieval only: allowlisted docs → chunks → embeddings in pgvector → filtered vector search → golden-set evaluation); a Next.js demo app (`/demo`, Generation 0) rendered from a validated UI Spec, with a browser telemetry SDK; the FastAPI *producer*; a separate worker (*consumer*) connected by a durable PostgreSQL-backed queue; deterministic behaviour signals; PostgreSQL 17 (telemetry, signals, queue, Product Memory, hypotheses, research runs, decisions, UI Spec versions, mutation runs, candidate evaluations, experiments, exposures, analyses); backend and frontend tests. No Docker, no AWS, no real LLM provider, no live Jev call, no Muse interface, no browser-based checks, no automatic promotion or rollback, no authentication, no deployment yet.
 
 ## 1. Prerequisites
 
@@ -177,6 +177,7 @@ A small root `Makefile` wraps the real commands. It only delegates to uv — uv 
 | `make generation-promote APPROVAL_ID=… REVIEWER=… CONFIRM=<page>:<generation>` | `… cli promote` | Atomic, re-validated promotion |
 | `make generation-rollback REVIEWER=… REASON="…" CONFIRM=<page>:<generation> [TO_GENERATION=…]` | `… cli rollback` | Pointer back to an earlier generation; nothing deleted |
 | `make promotion-eval` | `python -m darwin.generations.evaluation` | Golden promotion/rollback eval (36 cases, rolled back); writes `artifacts/promotion-eval.json` (git-ignored) |
+| `make observability-eval` | `python -m darwin.observability.evaluation` | Observability contract (19 cases, rolled back): spans, propagation, redaction, sampling, failure containment; writes `artifacts/observability-eval.json` (git-ignored) |
 
 Without make, run the same commands from `backend/`, e.g.:
 
@@ -291,6 +292,14 @@ backend/src/darwin/
 ├── llm/
 │   ├── port.py        # LLMProvider protocol, request/result/usage, error types
 │   └── fake.py        # FakeLLMProvider: deterministic, one mode per failure
+├── observability/     # OpenTelemetry (Step 16)
+│   ├── attributes.py  # span names, attribute + metric-label allowlists
+│   ├── tracing.py     # providers, safe span/stage/record helpers, setup
+│   ├── propagation.py # W3C trace context through the queue
+│   ├── http.py        # ASGI middleware (method, route template, status)
+│   ├── exporters.py   # compact console exporters
+│   ├── testing.py     # in-memory capture for tests
+│   └── evaluation.py  # make observability-eval
 ├── generations/       # human approval, promotion, rollback (Step 15)
 │   ├── active.py      # the page's current generation (pointer, else highest baseline)
 │   ├── eligibility.py # promotion_policy.v1 gate + evidence hash (re-derived, no overrides)
@@ -944,6 +953,21 @@ make promotion-eval
 ```
 
 With `make api` running, `/demo` renders the active generation; if the backend is unreachable or answers anything unexpected it renders the bundled Generation 0. Read the evidence before approving: `evidence_ready` means enough data and no guardrail concern — not that the candidate improved anything.
+
+---
+
+## 24. Observability (Step 16)
+
+Off by default. Turn it on per process with environment variables (no collector, no Docker, no account):
+
+```bash
+DARWIN_OTEL_ENABLED=true DARWIN_OTEL_EXPORTER=console make api
+DARWIN_OTEL_ENABLED=true DARWIN_OTEL_EXPORTER=console make worker
+DARWIN_OTEL_ENABLED=true DARWIN_OTEL_EXPORTER=console make research-run
+make observability-eval
+```
+
+Spans print as one line each on stderr (`[otel] span …`); metrics every `DARWIN_OTEL_METRIC_INTERVAL_SECONDS` (default 60). For a collector later: `DARWIN_OTEL_EXPORTER=otlp DARWIN_OTEL_ENDPOINT=http://localhost:4318`. Dependencies added: `opentelemetry-api`, `opentelemetry-sdk`, `opentelemetry-exporter-otlp-proto-http` (+ 8 transitive packages). Policy and vocabulary: OBSERVABILITY.md "As Built (Step 16)".
 
 ---
 

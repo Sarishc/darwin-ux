@@ -38,8 +38,10 @@ from darwin.llm.port import (
     StructuredGenerationRequest,
     StructuredGenerationResult,
 )
+from darwin.llm.traced import generate_structured
 from darwin.memory.embeddings import EmbeddingProvider
 from darwin.memory.retrieval import retrieve
+from darwin.observability import stage
 
 from .evidence import EvidenceBundle, build_evidence_bundle, generation_zero_components
 from .prompt import REQUEST_VERSION, build_request, evidence_hash
@@ -82,7 +84,7 @@ def call_provider(
     """
     started = time.perf_counter()
     try:
-        result = llm.generate_structured(request)
+        result = generate_structured(llm, request)  # traced (Step 16)
     except ProviderUnavailableError:
         return None, "provider_unavailable", "unavailable", _since(started)
     except ProviderTimeoutError:
@@ -131,7 +133,30 @@ def generate_from_bundle(
     bundle: EvidenceBundle,
     llm: LLMProvider,
 ) -> GenerationOutcome:
-    """Request -> one provider call -> checks -> HypothesisRun (+ Hypothesis)."""
+    """Request -> one provider call -> checks -> HypothesisRun (+ Hypothesis).
+
+    Traced as `hypothesis.generate`: status, error category, run id — never the
+    evidence bundle, the prompt or the model output.
+    """
+    with stage("hypothesis.generate", "hypothesis") as s:
+        outcome = _generate_from_bundle(session_factory, signal_id, bundle, llm)
+        s.set(
+            **{
+                "darwin.hypothesis_run.id": outcome.run_id,
+                "darwin.status": outcome.status,
+                "darwin.error.type": outcome.error_type,
+            }
+        )
+        s.outcome = outcome.status
+        return outcome
+
+
+def _generate_from_bundle(
+    session_factory: SessionFactory,
+    signal_id: uuid.UUID,
+    bundle: EvidenceBundle,
+    llm: LLMProvider,
+) -> GenerationOutcome:
     request = build_request(bundle)
     result: StructuredGenerationResult | None = None
     check: OutputCheck | None = None

@@ -69,6 +69,17 @@ class Settings(BaseSettings):
     jev_api_key: SecretStr | None = None
     jev_model: str = "jev-latest"
 
+    # Operational observability (Step 16): OpenTelemetry traces + metrics. Off by
+    # default; nothing DarwinUX does depends on it. `console` prints compact span /
+    # metric lines to stderr (local); `otlp` sends OTLP/HTTP to DARWIN_OTEL_ENDPOINT
+    # (e.g. a future ADOT collector); `none` records nothing. The sample ratio applies
+    # to NEW traces only (parent-based) and never to domain audit records.
+    otel_enabled: bool = False
+    otel_exporter: Literal["console", "otlp", "none"] = "console"
+    otel_endpoint: str | None = None
+    otel_sample_ratio: float = Field(default=1.0, ge=0.0, le=1.0)
+    otel_metric_interval_seconds: float = Field(default=60.0, gt=0)
+
     @field_validator("log_level", mode="before")
     @classmethod
     def _normalise_log_level(cls, value: object) -> object:
@@ -96,6 +107,26 @@ class Settings(BaseSettings):
             ):
                 raise ValueError(f"invalid CORS origin: {origin!r} (use scheme://host[:port])")
         return origins
+
+    @field_validator("otel_endpoint")
+    @classmethod
+    def _require_plain_endpoint(cls, value: str | None) -> str | None:
+        # scheme://host[:port][/path] only: no credentials, query or fragment in config.
+        if value is None:
+            return None
+        parts = urlsplit(value)
+        if (
+            parts.scheme not in ("http", "https")
+            or not parts.hostname
+            or parts.username
+            or parts.password
+            or parts.query
+            or parts.fragment
+        ):
+            raise ValueError(
+                "otel_endpoint must be http(s)://host[:port][/path] without credentials"
+            )
+        return value.rstrip("/")
 
     @field_validator("database_url")
     @classmethod

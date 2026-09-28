@@ -65,7 +65,10 @@ Decide during the step that needs it; a sensible default is given.
 | N2 | Critic on a different provider than the generator? | Step 10: same port and provider, separate request (`hypothesis_critique.v1`); test cross-provider once a real provider exists |
 | N3 | Embedding model and dimension | Step 8 ships only a deterministic hashing baseline (384-d, recorded per document). Choosing a real model means a migration if its dimension differs, a full re-embed, and beating the baseline on the golden set |
 | N4 | Local queue (no Docker locally) | A native SQS-compatible emulator or a Postgres-backed queue behind the queue port; decide in the telemetry step |
-| N5 | Local trace viewer | Jaeger via OTel collector |
+| N5 | Local trace viewer | Step 16 ships compact console exporters (no viewer needed). A local viewer (e.g. Jaeger via an OTel collector) is optional later; the OTLP seam already exists |
+| N26 | trace_id on audit records | Spans carry audit ids; audit rows do not store trace ids yet. Adding a nullable `trace_id` to runs would link records to traces both ways (a migration per table) |
+| N27 | Browser tracing | Not in Step 16: the frontend is observed through behavioural telemetry and backend spans. Browser OpenTelemetry would need consent, sampling and PII review |
+| N28 | Exporter warnings and shutdown with an unreachable collector | The OpenTelemetry SDK logs "Failed to export …" warnings and retries for a few seconds at shutdown; DarwinUX results are unaffected. Decide collector health alarms and a shutdown timeout before production |
 | N6 | Prompt storage | Prompt files in git, version ID recorded on every `ModelCall` |
 | N7 | How much LangChain to use | Only document loaders/splitters where they save time; LangGraph for orchestration |
 | N8 | Experiment statistics | Step 14: Wilson intervals per variant + Newcombe difference interval, fixed pre-registered primary metric, an operational floor of 100 exposed sessions per variant (not a power calculation). Still open: a real power/sample-size calculation, sequential testing or alpha spending for repeated looks, multiple-guardrail correction, sample-ratio-mismatch check |

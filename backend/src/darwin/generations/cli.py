@@ -32,6 +32,7 @@ from darwin.db.models import (
     UISpecVersion,
 )
 from darwin.logging_config import configure_logging
+from darwin.observability import setup_observability
 
 from .active import active_pointer
 from .eligibility import AnalysisNotFoundError, PointerMissingError, review
@@ -166,6 +167,7 @@ def run(argv: Sequence[str] | None, factory: SessionFactory) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     settings = Settings()
     configure_logging(settings.log_level)
+    setup_observability(settings, "darwin-cli")
     engine = create_db_engine(str(settings.database_url))
     try:
         return run(argv, sessionmaker(engine))

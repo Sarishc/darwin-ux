@@ -23,6 +23,7 @@ from dataclasses import dataclass
 
 from darwin.db.models import DecisionRun, ResearchRun
 from darwin.hypotheses.service import SessionFactory
+from darwin.observability import stage
 
 from .policy import PolicyOutcome, apply_policy, fail_closed
 from .port import Decider, DeciderReply, DeciderTimeoutError, DeciderUnavailableError
@@ -62,6 +63,28 @@ def _call(decider: Decider, request: DecisionRequest) -> tuple[DeciderReply | No
 
 
 def decide_research_run(
+    session_factory: SessionFactory, research_run_id: uuid.UUID, decider: Decider
+) -> DecisionOutcome:
+    """Traced as `decision.run`: decider, version, decision, status, fail-closed flag —
+    never the DecisionRequest, the hypothesis or the decider's reasoning."""
+    with stage("decision.run", "decision", {"darwin.research_run.id": research_run_id}) as s:
+        outcome = _decide_research_run(session_factory, research_run_id, decider)
+        s.set(
+            **{
+                "darwin.decision_run.id": outcome.decision_run_id,
+                "darwin.decider.type": outcome.decider,
+                "darwin.decider.version": outcome.decider_version,
+                "darwin.decision": outcome.decision,
+                "darwin.status": outcome.status,
+                "darwin.error.type": outcome.error_type,
+                "darwin.decision.fail_closed": outcome.decision != outcome.decider_decision,
+            }
+        )
+        s.outcome = outcome.decision
+        return outcome
+
+
+def _decide_research_run(
     session_factory: SessionFactory, research_run_id: uuid.UUID, decider: Decider
 ) -> DecisionOutcome:
     with session_factory() as session:

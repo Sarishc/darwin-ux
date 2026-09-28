@@ -174,6 +174,10 @@ Step 14 adds **no agent, no model call and no Jev/Muse control**. Experiments ar
 
 Future LLM/Jev involvement (e.g. an advisory read of an experiment report) must stay advisory and fail closed; it may never change allocation or status.
 
+## Current Implementation (Step 16): Observability of the AI Workflow
+
+Every AI-adjacent step is traced, but none of its content is. `research.run` → one `research.node` span per node execution (loops show as repeated nodes with increasing sequence numbers, plus retrieval/LLM counters and budgets); `memory.retrieve` (counts, never query or chunk text); `llm.generate` for every provider call through the single traced path `darwin.llm.traced` (provider, model, request version, token counts, latency, status — never instructions, evidence or output); `hypothesis.generate`, `decision.run` (decider, version, decision, fail-closed flag), `mutation.generate` (operation count, never values), `sandbox.evaluate`. LangSmith/LangChain tracing stays refused (Step 10): OpenTelemetry is the only tracing path, and it is DarwinUX-owned. The persisted `research_step` rows remain the complete audit; spans are sampled diagnostics.
+
 ## Current Implementation (Step 15): Promotion and Rollback — humans only
 
 Step 15 again adds **no agent and no model call**. The authority boundary:

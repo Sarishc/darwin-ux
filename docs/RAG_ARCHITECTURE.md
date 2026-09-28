@@ -47,13 +47,13 @@ golden dataset → per chunking config, in a rolled-back transaction:
 
 **Evaluation.** 26-query golden set (`backend/tests/evals/golden/retrieval.json`), Precision@5 / Recall@5 / MRR, reported per chunking config (see EVALUATION_STRATEGY.md). Current baseline with the hashing provider:
 
-(Recomputed at Step 15. The corpus is DarwinUX's own docs, so these move slightly whenever those docs are edited; results are identical for a given repository state.)
+(Recomputed at Step 16. The corpus is DarwinUX's own docs, so these move slightly whenever those docs are edited; results are identical for a given repository state.)
 
 | config | max chars | chunks | P@5 | R@5 | MRR |
 |---|---|---|---|---|---|
-| small | 1000 | 238 | 0.508 | 0.865 | 0.641 |
-| standard | 2000 | 149 | 0.469 | 0.923 | 0.634 |
-| large | 3000 | 132 | 0.469 | 0.923 | 0.676 |
+| small | 1000 | 240 | 0.500 | 0.865 | 0.622 |
+| standard | 2000 | 149 | 0.469 | 0.885 | 0.626 |
+| large | 3000 | 132 | 0.462 | 0.923 | 0.657 |
 
 Smaller chunks raise precision (more, narrower chunks from the right document) but lower recall and MRR (a multi-source question fills the top 5 with near-duplicates). The misses are paraphrases the hashing provider cannot bridge ("undo a change" vs. "rollback"; "where credentials are kept" vs. "Secrets Manager") — the gap a real embedding model is expected to close, now measurable.
 

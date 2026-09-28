@@ -29,6 +29,7 @@ from darwin.logging_config import configure_logging
 from darwin.memory.chunking import CONFIGS, STANDARD, ChunkerConfig, chunk_document
 from darwin.memory.corpus import SourceDocument, load_corpus
 from darwin.memory.embeddings import EmbeddingProvider, HashingEmbeddingProvider, require_dimension
+from darwin.observability import setup_observability, stage
 
 logger = logging.getLogger(__name__)
 
@@ -167,10 +168,16 @@ def ingest_corpus(
     config: ChunkerConfig = STANDARD,
     prune: bool = True,
 ) -> list[IngestOutcome]:
-    outcomes = [ingest_document(session, provider, d, config) for d in documents]
-    if prune:
-        prune_documents(session, documents)
-    return outcomes
+    attributes = {
+        "darwin.embedding.provider": getattr(provider, "name", "unknown"),
+        "darwin.memory.document_count": len(documents),
+    }
+    with stage("memory.ingest", "memory_ingest", attributes) as s:
+        outcomes = [ingest_document(session, provider, d, config) for d in documents]
+        if prune:
+            prune_documents(session, documents)
+        s.set(**{"darwin.memory.chunk_count": sum(o.chunks for o in outcomes)})
+        return outcomes
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -179,6 +186,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = parser.parse_args(argv)
     settings = Settings()
     configure_logging(settings.log_level)
+    setup_observability(settings, "darwin-cli")
     engine = create_db_engine(str(settings.database_url))
     provider = HashingEmbeddingProvider()
     try:

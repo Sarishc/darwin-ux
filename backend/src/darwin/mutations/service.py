@@ -23,6 +23,7 @@ from sqlalchemy import select
 
 from darwin.db.models import MutationRun, UISpecVersion
 from darwin.hypotheses.service import SessionFactory
+from darwin.observability import stage
 
 from .apply import Change, content_hash
 from .port import (
@@ -75,6 +76,30 @@ def _call(
 
 
 def generate_candidate(
+    session_factory: SessionFactory,
+    decision_run_id: uuid.UUID,
+    generator: MutationGenerator,
+    source_spec_id: uuid.UUID | None = None,
+) -> MutationOutcome:
+    """Traced as `mutation.generate`: generator, version, status, operation count —
+    never the MutationSpec, its values or the candidate spec."""
+    with stage("mutation.generate", "mutation", {"darwin.decision_run.id": decision_run_id}) as s:
+        outcome = _generate_candidate(session_factory, decision_run_id, generator, source_spec_id)
+        s.set(
+            **{
+                "darwin.mutation_run.id": outcome.mutation_run_id,
+                "darwin.generator.type": outcome.generator,
+                "darwin.generator.version": outcome.generator_version,
+                "darwin.status": outcome.status,
+                "darwin.error.type": outcome.error_type,
+                "darwin.mutation.operation_count": len(outcome.changes),
+            }
+        )
+        s.outcome = outcome.status
+        return outcome
+
+
+def _generate_candidate(
     session_factory: SessionFactory,
     decision_run_id: uuid.UUID,
     generator: MutationGenerator,

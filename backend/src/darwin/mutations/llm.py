@@ -18,6 +18,7 @@ from darwin.llm.port import (
     ProviderUnavailableError,
     StructuredGenerationRequest,
 )
+from darwin.llm.traced import generate_structured
 
 from .port import (
     GeneratorFailureError,
@@ -106,7 +107,7 @@ class LLMMutationGenerator:
 
     def generate(self, request: MutationRequest) -> GeneratorReply:
         try:
-            result = self.llm.generate_structured(build_mutation_llm_request(request))
+            result = generate_structured(self.llm, build_mutation_llm_request(request))
         except ProviderUnavailableError as error:
             raise GeneratorUnavailableError("llm provider unavailable") from error
         except ProviderTimeoutError as error:

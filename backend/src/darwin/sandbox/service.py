@@ -23,6 +23,7 @@ from typing import Any
 from darwin.db.models import CandidateEvaluationRun, MutationRun
 from darwin.hypotheses.service import SessionFactory
 from darwin.mutations.apply import content_hash
+from darwin.observability import span, stage
 
 from .harness import HARNESS_VERSION, HarnessError, HarnessRunner, NodeHarnessRunner
 from .policy import (
@@ -60,6 +61,33 @@ def evaluate_candidate(
     runner: HarnessRunner | None = None,
     mutation_run_id: uuid.UUID | None = None,
 ) -> EvaluationOutcome:
+    """Traced as `sandbox.evaluate` (+ `sandbox.frontend_harness`): versions, the
+    recommendation and each category's status — never spec content or harness facts."""
+    with stage("sandbox.evaluate", "sandbox") as s:
+        outcome = _evaluate_candidate(session_factory, candidate_spec_id, runner, mutation_run_id)
+        s.set(
+            **{
+                "darwin.evaluation_run.id": outcome.evaluation_run_id,
+                "darwin.evaluator.version": EVALUATOR_VERSION,
+                "darwin.sandbox.recommendation": outcome.recommendation,
+                "darwin.status": outcome.status,
+                "darwin.error.type": outcome.error_type,
+                **{
+                    f"darwin.sandbox.category.{name}": category.get("status")
+                    for name, category in outcome.categories.items()
+                },
+            }
+        )
+        s.outcome = outcome.recommendation
+        return outcome
+
+
+def _evaluate_candidate(
+    session_factory: SessionFactory,
+    candidate_spec_id: uuid.UUID,
+    runner: HarnessRunner | None = None,
+    mutation_run_id: uuid.UUID | None = None,
+) -> EvaluationOutcome:
     runner = runner or NodeHarnessRunner()
     started = time.perf_counter()
     harness_called = False
@@ -87,7 +115,8 @@ def evaluate_candidate(
         source_key, candidate_key = content_hash(context.source), content_hash(context.candidate)
         try:
             harness_called = True
-            facts = runner.run({source_key: context.source, candidate_key: context.candidate})
+            with span("sandbox.frontend_harness", {"darwin.harness.version": HARNESS_VERSION}):
+                facts = runner.run({source_key: context.source, candidate_key: context.candidate})
             harness_version = HARNESS_VERSION
             categories = evaluate_facts(context, facts[source_key], facts[candidate_key])
             status, error_type = "completed", None

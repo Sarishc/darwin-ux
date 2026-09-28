@@ -22,12 +22,14 @@ from datetime import timedelta
 from enum import StrEnum
 from typing import Any, Protocol
 
+from opentelemetry.trace import SpanKind
 from sqlalchemy.orm import Session
 
 from darwin.config import Settings
 from darwin.db.engine import create_db_engine
 from darwin.db.session import create_session_factory
 from darwin.logging_config import configure_logging
+from darwin.observability import extract, observe_gauge, record, setup_observability, span
 from darwin.queue.base import MessageQueue, PermanentMessageError, ReceivedMessage
 from darwin.queue.postgres import PostgresQueue
 from darwin.telemetry.messages import TELEMETRY_EVENT
@@ -128,7 +130,43 @@ def _log(level: int, message: str, received: ReceivedMessage, **context: object)
 def handle(
     queue: MessageQueue, received: ReceivedMessage, processor: Processor, *, max_attempts: int
 ) -> Outcome:
-    """Process one received message and settle it with the queue."""
+    """Process one received message and settle it with the queue — inside one CONSUMER span.
+
+    Trace semantics (Step 16): each DELIVERY is one `worker.process` span whose parent
+    is the producer's context from the message metadata, so API -> queue -> worker is
+    one trace; a retry is a sibling span in the same trace with a higher
+    `darwin.queue.attempt`. A missing or malformed context starts a fresh trace
+    (`darwin.trace.context` says which). Tracing can never change the outcome.
+    """
+    parent, how = extract(received.traceparent, received.tracestate)
+    started = time.perf_counter()
+    outcome = Outcome.RETRY
+    with span(
+        "worker.process",
+        {
+            "messaging.system": "darwin.postgres_queue",
+            "darwin.message.type": received.message_type,
+            "darwin.queue.attempt": received.attempt,
+            "darwin.trace.context": how,
+        },
+        context=parent,
+        kind=SpanKind.CONSUMER,
+    ) as s:
+        try:
+            outcome = _handle(queue, received, processor, max_attempts=max_attempts)
+        finally:
+            s.set(**{"darwin.queue.outcome": outcome.value})
+            if outcome in (Outcome.RETRY, Outcome.DEAD):
+                s.error(f"message_{outcome.value}")
+            labels = {"message_type": received.message_type, "outcome": outcome.value}
+            record("darwin.worker.messages", 1, **labels)
+            record("darwin.worker.duration", (time.perf_counter() - started) * 1000, **labels)
+    return outcome
+
+
+def _handle(
+    queue: MessageQueue, received: ReceivedMessage, processor: Processor, *, max_attempts: int
+) -> Outcome:
     if received.attempt > max_attempts:
         # A message that crashed the worker on every delivery never reached the
         # failure branch below; its receive count still stops it here.
@@ -202,11 +240,28 @@ def telemetry_processor(session_factory: Callable[[], Session]) -> Processor:
     return process
 
 
+def _queue_depth(session_factory: Callable[[], Session]) -> Callable[[], list[Any]]:
+    """Observable gauge callback: counts per queue state, read only at metric export time
+    (every DARWIN_OTEL_METRIC_INTERVAL_SECONDS) — never per request."""
+    from darwin.queue.status import queue_counts
+
+    def read() -> list[Any]:
+        with session_factory() as session:
+            counts = queue_counts(session)
+        return [
+            (counts[state], {"state": state}) for state in ("pending", "leased", "delayed", "dead")
+        ]
+
+    return read
+
+
 def main() -> None:
     settings = Settings()
     configure_logging(settings.log_level)
+    setup_observability(settings, "darwin-worker")  # off by default; never blocks startup
     engine = create_db_engine(str(settings.database_url))
     session_factory = create_session_factory(engine)
+    observe_gauge("darwin.queue.depth", _queue_depth(session_factory))
     queue = PostgresQueue(
         session_factory,
         visibility_timeout=timedelta(seconds=settings.queue_visibility_timeout_seconds),

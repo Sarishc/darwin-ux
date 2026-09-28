@@ -13,6 +13,11 @@ Modelled on SQS so an SQS adapter can replace it later:
 
 ``body`` carries the message exactly as the producer sent it, including
 untrusted telemetry payload data: it is never logged or shown by tooling.
+
+``traceparent`` / ``tracestate`` (Step 16, migration 0012) carry the producer's
+W3C trace context as OPERATIONAL metadata, beside the body rather than in it.
+Validated on write (format, length); the worker ignores anything malformed and
+starts a fresh trace. Never used for authorization.
 """
 
 import uuid
@@ -38,6 +43,13 @@ class QueueMessage(Base):
         CheckConstraint("status IN ('pending', 'done', 'dead')", name="status_is_known"),
         CheckConstraint("attempts >= 0", name="attempts_not_negative"),
         CheckConstraint("jsonb_typeof(body) = 'object'", name="body_is_object"),
+        CheckConstraint(
+            "traceparent IS NULL OR traceparent ~ '^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$'",
+            name="traceparent_is_w3c",
+        ),
+        CheckConstraint(
+            "tracestate IS NULL OR traceparent IS NOT NULL", name="tracestate_needs_traceparent"
+        ),
         # Serves the claim query exactly: pending messages ordered by visible_at.
         # Partial, so done/dead history does not bloat it.
         Index(
@@ -66,6 +78,10 @@ class QueueMessage(Base):
 
     # Sanitised, bounded: an exception type and field names, never values.
     last_error: Mapped[str | None] = mapped_column(String(LAST_ERROR_MAX_LENGTH))
+
+    # W3C trace context of the producer (operational metadata; see module docstring).
+    traceparent: Mapped[str | None] = mapped_column(String(55))
+    tracestate: Mapped[str | None] = mapped_column(String(512))
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     # When the message reached done or dead.
