@@ -53,6 +53,13 @@ from darwin.research.service import (
 
 pytestmark = pytest.mark.integration
 
+EXPERIMENT_TABLES = {
+    "experiment",
+    "experiment_exposure",
+    "experiment_analysis",
+    "experiment_lifecycle_event",
+}
+
 SessionFactory = Callable[[], Session]
 FIXTURES = Path(__file__).parents[1] / "fixtures"
 EMBEDDER = HashingEmbeddingProvider()
@@ -413,7 +420,10 @@ def test_logs_carry_no_prompt_evidence_or_output(
 
 def test_no_mutation_or_experiment_capability_exists(migrated_engine: Engine) -> None:
     tables = set(inspect(migrated_engine).get_table_names())
-    assert not {t for t in tables if any(w in t for w in ("experiment", "deploy"))}
+    # Step 14 adds controlled experiments (config, exposures, analyses) — and nothing that
+    # deploys, promotes or creates generations.
+    assert {t for t in tables if "experiment" in t} <= EXPERIMENT_TABLES
+    assert not {t for t in tables if any(w in t for w in ("deploy", "promot", "generation"))}
     # Step 12 adds candidate-only mutation data; nothing else mutation-related may exist.
     assert {t for t in tables if "mutation" in t} <= {"mutation_run"}
     assert not any(w in n for n in NODES for w in ("mutation", "experiment", "deploy"))

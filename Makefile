@@ -16,7 +16,9 @@ PG_LOG = $(shell brew --prefix)/var/log/$(PG_FORMULA).log
 	migrate migration-status migrate-sql queue-status test-integration \
 	memory-ingest memory-query memory-eval hypothesis-generate hypothesis-eval \
 	research-run research-resume research-eval decision-run decision-eval \
-	ui-spec-import ui-spec-show mutation-generate mutation-eval candidate-eval sandbox-eval
+	ui-spec-import ui-spec-show mutation-generate mutation-eval candidate-eval sandbox-eval \
+	experiment-create experiment-start experiment-pause experiment-stop experiment-complete \
+	experiment-analyze experiment-show experiment-eval
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-17s %s\n", $$1, $$2}'
@@ -159,6 +161,38 @@ candidate-eval: ## Evaluate CANDIDATE_SPEC_ID=<uuid> (default: latest candidate)
 
 sandbox-eval: ## Golden candidate-evaluation set through the real sandbox harness (rolled back)
 	$(BACKEND) uv run $(ENV_FILE) python -m darwin.sandbox.evaluation
+
+# ---- Controlled experiments (Step 14): human commands only; nothing is promoted ---------
+
+EXPERIMENT_CLI = $(BACKEND) uv run $(ENV_FILE) python -m darwin.experiments.cli
+
+experiment-create: ## Draft experiment: KEY= ALLOCATION_BP= PRIMARY= GUARDRAILS=a,b [EVALUATION_RUN_ID= MIN_SAMPLE= TRAFFIC_SOURCE=]
+	$(EXPERIMENT_CLI) create --key "$(KEY)" --allocation-bp "$(ALLOCATION_BP)" \
+		--primary "$(PRIMARY)" --guardrails "$(GUARDRAILS)" \
+		$(if $(EVALUATION_RUN_ID),--evaluation-run-id $(EVALUATION_RUN_ID)) \
+		$(if $(MIN_SAMPLE),--min-sample $(MIN_SAMPLE)) \
+		$(if $(TRAFFIC_SOURCE),--traffic-source $(TRAFFIC_SOURCE))
+
+experiment-start: ## Start (or resume) EXPERIMENT_ID= after the start gate; CONFIRM=<experiment key>
+	$(EXPERIMENT_CLI) start --experiment-id "$(EXPERIMENT_ID)" --confirm "$(CONFIRM)"
+
+experiment-pause: ## Pause EXPERIMENT_ID= (everyone sees Generation 0 while paused)
+	$(EXPERIMENT_CLI) pause --experiment-id "$(EXPERIMENT_ID)"
+
+experiment-stop: ## Stop EXPERIMENT_ID= REASON=human_decision|guardrail_concern|candidate_issue|planned_end
+	$(EXPERIMENT_CLI) stop --experiment-id "$(EXPERIMENT_ID)" --reason "$(REASON)"
+
+experiment-complete: ## End data collection for EXPERIMENT_ID= (does NOT promote anything)
+	$(EXPERIMENT_CLI) complete --experiment-id "$(EXPERIMENT_ID)"
+
+experiment-analyze: ## Analyze EXPERIMENT_ID= -> new immutable analysis record (evidence, no winner)
+	$(EXPERIMENT_CLI) analyze --experiment-id "$(EXPERIMENT_ID)"
+
+experiment-show: ## Show EXPERIMENT_ID= configuration and latest assessment
+	$(EXPERIMENT_CLI) show --experiment-id "$(EXPERIMENT_ID)"
+
+experiment-eval: ## Golden experiment eval (eligibility, allocation, exposure, analysis, failure; rolled back)
+	$(BACKEND) uv run $(ENV_FILE) python -m darwin.experiments.evaluation
 
 test-integration: ## Integration tests against local darwin_test (needs PostgreSQL 17)
 	$(BACKEND) uv run $(ENV_FILE) pytest -m integration

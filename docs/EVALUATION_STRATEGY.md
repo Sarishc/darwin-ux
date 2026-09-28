@@ -214,6 +214,28 @@ With a fake provider these measure the **orchestration** — routing, bounds, pe
 
 The golden labels encode DarwinUX's own policy, so perfect agreement is a specification test of the gate, not proof the rules capture everything a human would notice. No LLM-as-judge is used; design taste, copy and visual quality stay with humans. The render-crash case is simulated (no schema-valid spec crashes today's registry).
 
+**Implemented (Step 14), experiment evaluation and statistics.** Experiments are the statistical level. `experiment_analysis.v1` reports, per variant and for one pre-registered primary metric plus 1–3 guardrails, all session-level binary rates on existing telemetry (`rage_click_session_rate`, `error_burst_session_rate`, `form_error_session_rate`, `signup_submit_session_rate`):
+
+- exposed sessions n, sessions with the outcome x, rate x/n, 95% **Wilson** interval;
+- difference (candidate − control) with **Newcombe's hybrid score** 95% interval (method 10, built from the two Wilson intervals; matches Newcombe 1998's worked example to 4 decimals); relative difference only when the control rate > 0;
+- data sufficiency: `insufficient_data` below the per-variant floor (default and minimum 100 exposed sessions) — an operational floor, **not** a power calculation;
+- guardrails: `breach` when the whole difference interval is on the harmful side (→ `stop_recommended`, even below the floor), `watch` when the point estimate is > 2 percentage points worse (→ `needs_review` once the floor is met);
+- integrity: render fallbacks and refused exposures that happened inside a collection window, assignment mismatches and out-of-window exposures (→ `needs_review`); an exposure refused because it happened while paused is expected, not a finding;
+- attribution: only inside active collection windows (running intervals of the immutable lifecycle history); the windows used are part of the report.
+
+It never outputs a winner. Assumptions: sessions are independent units; the horizon is fixed in advance (repeated looks inflate false positives — N8); simulated traffic is not user evidence.
+
+`make experiment-eval` runs 66 golden cases (`backend/tests/evals/golden/experiments.json`) against real Step 13 evaluations, the real worker path and real signals, rolled back: eligibility (16), allocation (6), exposure (6), analysis (13), collection windows (9: exposures processed while paused / after completion refused, outcomes during a pause or after stop/complete not attributed, resumed outcomes attributed, three windows around two pauses, a boundary-straddling signal excluded, identical rerun), serving (3), database constraints (13, including duplicate transitions, non-increasing transition times, a forged or rewritten lifecycle history). Analysis cases also require the recovered counts to equal the seeded ones, and every analysis case checks that nothing was promoted. A counting paused or post-completion outcome is a fail-open; a mutation check that disables the windows produces 7 fail-opens, so the set does detect contamination.
+
+| Metric | experiment_analysis.v1 |
+|---|---|
+| Cases meeting all expectations | 66/66 |
+| Eligibility / allocation / exposure / analysis / window / serving / DB-constraint accuracy | 16/16 · 6/6 · 6/6 · 13/13 · 9/9 · 3/3 · 13/13 |
+| Automatic promotions | 0 |
+| **FAIL-OPEN COUNT** (experiment created/started, candidate served, exposure counted, config stored, or analysis more conclusive than proven) | **0** |
+
+As with Step 13, the labels encode DarwinUX's own rules: this proves the gates and arithmetic behave as specified, not that the metrics capture user value.
+
 **UX improvement is measured by experiments, not by evaluation.** Evaluation predicts whether a mutation might be good. Experiments measure whether it actually is. These are different things and should not be conflated.
 
 **When to run:**

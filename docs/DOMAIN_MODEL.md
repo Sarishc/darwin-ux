@@ -172,6 +172,17 @@ A record of a retrieval operation against Product Memory.
 
 ---
 
+### Experiments — implemented (Step 14)
+
+As built in migration 0010 (the Experiment design further below; this is the first concrete form — two variants only, no Generation or promotion yet):
+
+- **experiment** — `id`, `experiment_key` (UNIQUE, `^[a-z][a-z0-9_]{2,63}$`), `page_id`; provenance `candidate_evaluation_run_id`, `mutation_run_id`, `hypothesis_id` (FKs); `control_spec_id` / `candidate_spec_id` + `control_spec_hash` / `candidate_spec_hash` (sha256, must differ); `control_allocation_bp` + `candidate_allocation_bp` (integers summing to 10 000; candidate CHECK IN 100/500/1000/2500/5000); `primary_metric` (CHECK: one of four), `guardrail_metrics` (JSONB array of 1–3 known metrics, never the primary); `minimum_sample_per_variant` (100–100 000); `traffic_source` (`simulated | real`); lifecycle `status` (`draft | running | paused | stopped | completed`), `status_changed_at` (when the current status began; strictly increases), `started_at`, `paused_at`, `stopped_at`, `stop_reason` (closed list), `created_at`. A BEFORE INSERT/UPDATE trigger requires every experiment to be inserted as `draft`, refuses any change to the configuration columns and any status move outside draft→running, running⇄paused, draft|running|paused→stopped, running|paused→completed; `started_at` is set once. Partial UNIQUE index: at most one `running`/`paused` experiment per page. Instead of the design's float `traffic_percentage`, allocation is exact integer basis points.
+- **experiment_lifecycle_event** — the append-only lifecycle history: `experiment_id`, `sequence` (0 = created as draft; UNIQUE per experiment), `from_status` (NULL only at 0), `to_status`, `occurred_at` (= the experiment's `status_changed_at`). Written only by an AFTER INSERT/UPDATE trigger on `experiment`; a BEFORE INSERT trigger refuses any row that does not match the experiment's current status and time or does not continue the previous event with an allowed transition at a later time; UPDATE and DELETE are refused. The running intervals of this history are the experiment's **collection windows**.
+- **experiment_exposure** — recorded only while the experiment is running; one row per (experiment, anonymous session): `variant` (CHECK control|candidate), `spec_hash`, `event_id` (FK to the first `user_event`), `exposed_at` (client time), `recorded_at`. UNIQUE(`experiment_id`, `session_id`) is the exposure identity; immutable (trigger).
+- **experiment_analysis** — one immutable aggregate report per analysis run: `analysis_version` (`experiment_analysis.v1`), `as_of` (the cutoff), `status` (`completed | analysis_error`), `assessment` (CHECK `insufficient_data | evidence_ready | needs_review | stop_recommended` — there is no "winner"), `data_sufficiency`, `guardrail_status`, per-variant exposure counts, `reason_codes`, `report` (JSONB, aggregates only), `report_hash` (sha256 of the canonical report), `error_type`. CHECK: an analysis error can only be `needs_review`. Re-analysis adds a row.
+
+The design's `outcome`, `statistical_significance`, `metrics_before/after` and Generation link are deliberately absent: Step 14 produces evidence, not a verdict.
+
 ### Candidate evaluation runs — implemented (Step 13)
 
 As built in migration 0009:

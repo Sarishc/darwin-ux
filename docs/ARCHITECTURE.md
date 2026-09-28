@@ -185,7 +185,7 @@ A fourth, automatic decision exists: **rollback on guardrail breach** (error rat
 
 ## AI / Agent Decision Flow
 
-> **Built so far (Step 13):** research → hypothesis → critique → decision gate → candidate mutation → **sandbox evaluation**: every candidate can be evaluated by rendering it through the real Zod schema, registry and `SpecPage` in a jsdom harness (telemetry captured, never sent) and scored in seven separate categories by a deterministic `candidate_eval.v1` policy — pass | human_review | reject, stored as an immutable `candidate_evaluation_run`; a safe-but-harmful candidate is rejected. Step 12: a proceed decision (re-checked for stale provenance) produces a MutationRequest; a MutationGenerator (fixture, LLM-port baseline; Muse is an unimplemented seam) proposes a data-only MutationSpec; DarwinUX validates it against an explicit mutation surface, applies it in memory, proves only allowed leaves changed, and stores an immutable candidate UI Spec (`ui_spec_version`, `mutation_run`) that the frontend's real Zod schema accepts. Human approval, experiments, traffic allocation, statistical analysis, promotion, rollback, browser-based checks and deployment below are still design.
+> **Built so far (Step 14):** … → sandbox evaluation → **controlled experiment**: a Step 13 `pass` (re-checked from the database) can become a human-created draft experiment against Generation 0, started only by an explicit CLI command after a deterministic start gate; stable-hash assignment served by the backend, exposure only after a successful render, idempotent exposures through the telemetry pipeline, and immutable frequentist analyses that are evidence for a human (see "Experiment Architecture (Step 14)" below). Promotion, generations, automatic rollback and deployment are still design. Step 13: **sandbox evaluation**: every candidate can be evaluated by rendering it through the real Zod schema, registry and `SpecPage` in a jsdom harness (telemetry captured, never sent) and scored in seven separate categories by a deterministic `candidate_eval.v1` policy — pass | human_review | reject, stored as an immutable `candidate_evaluation_run`; a safe-but-harmful candidate is rejected. Step 12: a proceed decision (re-checked for stale provenance) produces a MutationRequest; a MutationGenerator (fixture, LLM-port baseline; Muse is an unimplemented seam) proposes a data-only MutationSpec; DarwinUX validates it against an explicit mutation surface, applies it in memory, proves only allowed leaves changed, and stores an immutable candidate UI Spec (`ui_spec_version`, `mutation_run`) that the frontend's real Zod schema accepts. Promotion to a new Generation, automatic rollback, the Evolution Lab UI, browser-based checks and deployment below are still design.
 
 ```mermaid
 graph TD
@@ -237,6 +237,46 @@ Jev is not a single call. It serves as a decision gate at multiple points becaus
 Each gate can have different thresholds, different confidence requirements, and different fallback behaviors. Whether Jev's confidence values are *calibrated* is not assumed — it must be measured (see EVALUATION_STRATEGY.md, "Evaluating Jev decisions").
 
 **Fail closed.** If Jev is unavailable, times out, or returns something that fails schema validation, the gate outcome is `escalate` (to a human) or `stop` — never `proceed`.
+
+## Experiment Architecture (Step 14)
+
+Step 13 answers "is this candidate safe enough to consider?" (deterministic). Step 14 answers "what happens when a bounded group of sessions experiences it?" (statistical). The two are never mixed: the sandbox verdict is an eligibility precondition, not evidence of improvement.
+
+```
+CandidateEvaluationRun (pass, re-derived from the DB)
+  -> make experiment-create        draft Experiment (config validated against allowlists)
+  -> make experiment-start CONFIRM=<key>   start gate (all checks) -> running
+  -> POST /api/v1/experiments/assignment   stable hash -> variant + spec (backend only)
+  -> browser: Zod -> registry -> SpecPage   rendered? -> experiment_exposure event
+                                            failed?   -> Generation 0 + experiment_fallback
+  -> telemetry pipeline (API -> queue -> worker): user_event + idempotent experiment_exposure
+  -> make experiment-analyze        counts -> experiment_analysis.v1 -> immutable ExperimentAnalysis
+  -> HUMAN REVIEW                   (no automatic winner, promotion, rollback or deployment)
+```
+
+| Concern | Built (Step 14) |
+|---|---|
+| Eligibility | the CandidateEvaluationRun exists, completed, `pass`, `candidate_eval.v1`, reasons exactly `all_gates_passed`, every category `pass`; no newer non-pass evaluation of the candidate; Step 13's provenance re-check still holds (hashes re-computed, succeeded MutationRun, decision still proceed); the parent is Generation 0; both specs contain the metric components. A request that merely claims this is not trusted. |
+| Start gate | the above again, plus: draft (or paused), stored hashes equal the evaluated specs, configuration inside the allowlists, no other active experiment on the page. Every failed check is returned as a reason code; nothing starts. |
+| Human boundary | create / start / pause / stop / complete / analyze exist only as CLI commands; `start` requires retyping the experiment key. The only HTTP route is the read-only assignment endpoint. No model allocates traffic or reads results. |
+| Assignment | `bucket = int(sha256(f"{key}:{session_id}")[:8], big-endian) % 10 000`; candidate iff `bucket < candidate_allocation_bp`. Deterministic, cross-process stable (never Python `hash()`), salted per experiment, monotonic in allocation. |
+| Allocation | integer basis points; candidate ∈ {100, 500, 1000, 2500, 5000} (1/5/10/25/50%), control = 10 000 − candidate. Anything else (0, 100%, 51–99%, negative, float, bool, string) is refused in code and by a database CHECK. |
+| Variant serving | the backend serves `{experiment_key, variant, spec_hash, spec}` after re-hashing the stored spec; any mismatch or error answers `fallback`/`none`. Both variants take the same fetch → validate → render path. |
+| Exposure | ASSIGNED ≠ EXPOSED. The browser sends `experiment_exposure` from an effect that runs only after the assigned spec committed to the DOM. The worker records it only if the experiment is **running** when the event is processed, the exposure's time lies inside a collection window, the variant equals a fresh assignment and the spec hash matches; UNIQUE(experiment, session) makes repeats no-ops. A delayed or redelivered exposure processed while paused, stopped or completed never becomes an exposure (the raw event is still stored). |
+| Collection windows | EXPOSED ≠ ATTRIBUTED. Every status change is written by a database trigger to the immutable `experiment_lifecycle_event` history (validated against the experiment row and the previous event; no UPDATE, no DELETE). Each move into `running` opens a window `[opened, closed)`; pause, stop or complete closes it. Only exposures and outcomes whose time falls inside a window count; a signal counts only if its whole evidence interval lies inside one window (a signal straddling a boundary is excluded and reported). The windows used are listed in every analysis report. |
+| Lifecycle semantics | running: assignment active, variants served, exposures recorded, outcomes attributed. paused / stopped / completed: assignment inactive, Generation 0 served (`none`), no new exposures, no new attribution. Historical evidence is never changed. |
+| Metrics | four session-level binary metrics on existing telemetry: `rage_click_session_rate`, `error_burst_session_rate` (signals), `form_error_session_rate`, `signup_submit_session_rate` (events). Exactly one primary, 1–3 guardrails, never the primary. |
+| Statistics | per variant: exposed sessions, successes, rate, 95% Wilson interval; candidate − control difference with Newcombe's hybrid score interval; relative difference only when the control rate > 0. |
+| Assessment | `insufficient_data` (below the per-variant floor, ≥ 100) · `evidence_ready` · `needs_review` (fallbacks, rejected/mismatched exposures, guardrail watch, analysis error) · `stop_recommended` (a guardrail's whole interval harmful). A flag for a human — nothing is paused or rolled back automatically in Step 14. |
+| Records | `experiment` (born as draft; configuration immutable by trigger; lifecycle transitions allowlisted, each strictly later than the last), `experiment_lifecycle_event` (append-only, trigger-written), `experiment_exposure` (immutable), `experiment_analysis` (immutable, aggregates only, report hash, collection windows). |
+
+**Failure behaviour (fail closed).** Missing / non-pass / superseded evaluation, hash mismatch, unknown allocation or metric → no experiment is created or started. Assignment error, candidate unavailable or not the evaluated spec → Generation 0, no exposure. Candidate fails the schema or throws while rendering → Generation 0 + `experiment_fallback`, no exposure. Analysis error, or a lifecycle history that fails validation → an immutable `analysis_error` record, `needs_review`. Too few exposed sessions → `insufficient_data`. Exposure or outcome outside every collection window → not counted (out-of-window exposures are reported and need review).
+
+**Deliberate deviation from the earlier design.** The design above (and DATA_PIPELINES.md) planned automatic rollback on a guardrail breach. Step 14 only *flags* `stop_recommended`; a human stops with one command (`make experiment-stop`). Automatic rollback waits until repeated-look false alarms are handled (OPEN_QUESTIONS.md N19).
+
+**Limitations.** Window boundaries are server time; exposure and outcome times are the client's clock (one browser, so consistent with each other). A client clock skewed by more than the distance to a boundary can misplace an event across it; the extra requirement that an event arrive no earlier than its window opened (server clock) blocks the "arrived before the window existed" case, not every skew. Sessions still showing a page loaded before a pause behave in the candidate UI during the pause; that evidence is discarded, not attributed. Traffic is simulated (labelled `traffic_source=simulated` everywhere). The sample floor is an operational minimum, not a power calculation. Repeated analyses of a running experiment inflate false positives. There is no completion event, so "task success" is not measurable yet. The candidate's footer reads "Generation 1" while control reads "Generation 0" — a small visible difference between arms.
+
+---
 
 ## Layer Architecture
 
@@ -372,6 +412,7 @@ darwin-ux/
 │   │       ├── decisions/         # decision gate: port, rules, test double, LLM baseline, Jev adapter (Step 11)
 │   │       ├── mutations/         # candidate mutations: surface, MutationSpec, apply, generators, UI Spec versions (Step 12)
 │   │       ├── sandbox/           # candidate evaluation: provenance, harness runner, candidate_eval.v1 policy (Step 13)
+│   │       ├── experiments/       # controlled experiments: assignment, eligibility, exposure, stats, analysis (Step 14)
 │   │       ├── evaluation/        # Evaluation engine, metrics, judges
 │   │       ├── pipelines/         # Telemetry & ingestion processing logic
 │   │       ├── mutation/          # UI Spec, component registry, MutationSpec validation

@@ -1,6 +1,6 @@
 # DarwinUX — Development Environment
 
-> **Status (Step 13):** candidate sandbox evaluation (real Zod schema + registry + SpecPage in a jsdom harness; seven separate categories; deterministic `candidate_eval.v1` policy; immutable `candidate_evaluation_run`); candidate mutations (proceed decision → provenance re-check → MutationGenerator: fixture / LLM-port baseline / unimplemented Muse seam → strict MutationSpec → in-memory apply + protected diff → immutable `ui_spec_version` candidate, Zod-checked; `mutation_run`); a decision gate after research (Decider port: `rules.v1`, a test double, an LLM-port baseline, a Jev adapter not yet called live; fail-closed policy; `decision_run`); a bounded LangGraph research workflow (retrieval → sufficiency heuristic → ≤ 1 refinement → Step 9 hypothesis → critique → accept / human review via CLI resume / reject / stop; `research_run` / `research_step`); hypothesis generation (signal → Product Memory evidence → one structured call through an LLM port → strict validation → `hypothesis_run` / `hypothesis`; deterministic `FakeLLMProvider` only); Product Memory (retrieval only: allowlisted docs → chunks → embeddings in pgvector → filtered vector search → golden-set evaluation); a Next.js demo app (`/demo`, Generation 0) rendered from a validated UI Spec, with a browser telemetry SDK; the FastAPI *producer*; a separate worker (*consumer*) connected by a durable PostgreSQL-backed queue; deterministic behaviour signals; PostgreSQL 17 (telemetry, signals, queue, Product Memory, hypotheses, research runs, decisions, UI Spec versions, mutation runs, candidate evaluations); backend and frontend tests. No Docker, no AWS, no real LLM provider, no live Jev call, no Muse interface, no browser-based checks, no human approval, experiments or deployment yet.
+> **Status (Step 14):** controlled experiments (Step 13 pass re-derived → human-created draft → explicit CLI start after a start gate → stable-hash assignment served by the backend → exposure only after a successful render, idempotent, via the telemetry pipeline → Wilson / Newcombe analysis → immutable `experiment_analysis`; no winner, no promotion; `/demo/experiment`); candidate sandbox evaluation (real Zod schema + registry + SpecPage in a jsdom harness; seven separate categories; deterministic `candidate_eval.v1` policy; immutable `candidate_evaluation_run`); candidate mutations (proceed decision → provenance re-check → MutationGenerator: fixture / LLM-port baseline / unimplemented Muse seam → strict MutationSpec → in-memory apply + protected diff → immutable `ui_spec_version` candidate, Zod-checked; `mutation_run`); a decision gate after research (Decider port: `rules.v1`, a test double, an LLM-port baseline, a Jev adapter not yet called live; fail-closed policy; `decision_run`); a bounded LangGraph research workflow (retrieval → sufficiency heuristic → ≤ 1 refinement → Step 9 hypothesis → critique → accept / human review via CLI resume / reject / stop; `research_run` / `research_step`); hypothesis generation (signal → Product Memory evidence → one structured call through an LLM port → strict validation → `hypothesis_run` / `hypothesis`; deterministic `FakeLLMProvider` only); Product Memory (retrieval only: allowlisted docs → chunks → embeddings in pgvector → filtered vector search → golden-set evaluation); a Next.js demo app (`/demo`, Generation 0) rendered from a validated UI Spec, with a browser telemetry SDK; the FastAPI *producer*; a separate worker (*consumer*) connected by a durable PostgreSQL-backed queue; deterministic behaviour signals; PostgreSQL 17 (telemetry, signals, queue, Product Memory, hypotheses, research runs, decisions, UI Spec versions, mutation runs, candidate evaluations, experiments, exposures, analyses); backend and frontend tests. No Docker, no AWS, no real LLM provider, no live Jev call, no Muse interface, no browser-based checks, no promotion, generations, automatic rollback or deployment yet.
 
 ## 1. Prerequisites
 
@@ -166,6 +166,11 @@ A small root `Makefile` wraps the real commands. It only delegates to uv — uv 
 | `make mutation-eval` | `python -m darwin.mutations.evaluation` | Golden mutation eval (28 cases), each generator separately, Zod-checked; writes `artifacts/mutation-eval.json` (git-ignored) |
 | `make candidate-eval [CANDIDATE_SPEC_ID=…] [MUTATION_RUN_ID=…]` | `python -m darwin.sandbox.cli` | Evaluate one candidate in the sandbox; prints each category; records a `candidate_evaluation_run` |
 | `make sandbox-eval` | `python -m darwin.sandbox.evaluation` | Golden sandbox eval (29 cases) through the real harness, with the fail-open count; writes `artifacts/sandbox-eval.json` (git-ignored) |
+| `make experiment-create KEY=… ALLOCATION_BP=… PRIMARY=… GUARDRAILS=a,b [EVALUATION_RUN_ID=… MIN_SAMPLE=… TRAFFIC_SOURCE=…]` | `python -m darwin.experiments.cli create` | A DRAFT experiment from a Step 13 pass (default: the latest pass); never starts it |
+| `make experiment-start EXPERIMENT_ID=… CONFIRM=<key>` | `… cli start` | Start (or resume) after the start gate; the key must be retyped |
+| `make experiment-pause` / `experiment-stop REASON=…` / `experiment-complete` `EXPERIMENT_ID=…` | `… cli pause\|stop\|complete` | Lifecycle; completing ends data collection and promotes nothing |
+| `make experiment-analyze EXPERIMENT_ID=…` / `make experiment-show EXPERIMENT_ID=…` | `… cli analyze\|show` | A new immutable analysis record (evidence, no winner) / configuration + latest assessment |
+| `make experiment-eval` | `python -m darwin.experiments.evaluation` | Golden experiment eval (66 cases, rolled back), fail-open count; writes `artifacts/experiment-eval.json` (git-ignored) |
 
 Without make, run the same commands from `backend/`, e.g.:
 
@@ -280,6 +285,19 @@ backend/src/darwin/
 ├── llm/
 │   ├── port.py        # LLMProvider protocol, request/result/usage, error types
 │   └── fake.py        # FakeLLMProvider: deterministic, one mode per failure
+├── experiments/       # controlled experiments (Step 14)
+│   ├── vocabulary.py  # variants, lifecycle, allowlisted allocations, metric definitions
+│   ├── assignment.py  # stable-hash bucketing (the only assignment code)
+│   ├── eligibility.py # Step 13 pass re-derived; the start gate
+│   ├── serving.py     # which spec a session renders (re-hashed); fallbacks
+│   ├── exposure.py    # experiment_exposure events -> idempotent exposure rows (worker)
+│   ├── windows.py     # active collection windows from the lifecycle history (pure)
+│   ├── stats.py       # Wilson / Newcombe intervals (pure)
+│   ├── policy.py      # experiment_analysis.v1 assessment (pure)
+│   ├── analysis.py    # per-variant counts from the database
+│   ├── service.py     # create / start / pause / stop / complete / analyze
+│   ├── cli.py         # make experiment-*
+│   └── evaluation.py  # golden experiment set (make experiment-eval)
 ├── sandbox/           # candidate sandbox evaluation (Step 13)
 │   ├── harness.py     # runs the frontend harness (temp files, argv); strict output schema
 │   ├── provenance.py  # candidate / parent / mutation run / decision re-check
@@ -880,6 +898,22 @@ make sandbox-eval                                     # 29 golden cases, real ha
 ```
 
 The harness itself (`frontend/src/evaluation/`) runs under Vitest: `npm run sandbox-harness` with `SANDBOX_INPUT` / `SANDBOX_OUTPUT` pointing at temp JSON files (the backend does this for you, with an argument array — never a shell string). Its unit tests run with the normal `npm test`. Dependencies: `axe-core` (already in the tree via eslint's jsx-a11y; now declared directly, dev only). No Playwright, no browser download: jsdom cannot measure colour contrast, layout or real timing, and those checks are deliberately deferred.
+
+---
+
+## 22. Controlled Experiments (Step 14)
+
+Every command is an explicit human action; nothing here promotes or deploys. Design and limits: ARCHITECTURE.md, "Experiment Architecture (Step 14)".
+
+```bash
+make experiment-create KEY=rage_fix_pricing ALLOCATION_BP=1000 PRIMARY=rage_click_session_rate GUARDRAILS=form_error_session_rate,signup_submit_session_rate
+make experiment-start EXPERIMENT_ID=<uuid> CONFIRM=rage_fix_pricing
+make experiment-analyze EXPERIMENT_ID=<uuid>
+make experiment-stop EXPERIMENT_ID=<uuid> REASON=human_decision
+make experiment-eval
+```
+
+Browser: with `make api`, `make worker` and `make web` running, `/demo/experiment` asks the backend for this tab's variant and renders it (`/demo` stays plain Generation 0). While no experiment is running — including while one is paused, stopped or completed — it shows Generation 0 and sends no exposure; nothing a session does then is attributed to either arm. Allocations are 100/500/1000/2500/5000 basis points (1–50%) only. No new dependencies.
 
 ---
 

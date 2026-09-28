@@ -1,0 +1,1305 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "elig_pass_eligible",
+      "kind": "eligibility",
+      "description": "A real Step 13 pass candidate can be drafted and explicitly started.",
+      "expected": {
+        "created": true,
+        "started": true
+      }
+    },
+    {
+      "id": "elig_reject_refused",
+      "kind": "eligibility",
+      "description": "A Step 13 reject (the harmful-but-safe candidate) can never become an experiment.",
+      "evaluation": "reject",
+      "expected": {
+        "created": false,
+        "started": false,
+        "reasons_include": [
+          "evaluation_not_pass"
+        ]
+      }
+    },
+    {
+      "id": "elig_human_review_refused",
+      "kind": "eligibility",
+      "description": "A Step 13 human_review (unrelated change) is not eligible for an experiment.",
+      "evaluation": "human_review",
+      "expected": {
+        "created": false,
+        "started": false,
+        "reasons_include": [
+          "evaluation_not_pass"
+        ]
+      }
+    },
+    {
+      "id": "elig_missing_evaluation",
+      "kind": "eligibility",
+      "description": "An evaluation id that does not exist is refused, not trusted.",
+      "evaluation": "missing",
+      "expected": {
+        "created": false,
+        "started": false,
+        "reasons_include": [
+          "evaluation_not_found"
+        ]
+      }
+    },
+    {
+      "id": "elig_forged_pass_tampered_candidate",
+      "kind": "eligibility",
+      "description": "A forged pass record for a candidate whose stored hash does not match its content is refused by the provenance re-check.",
+      "corrupt": "forged_pass_on_tampered_candidate",
+      "expected": {
+        "created": false,
+        "started": false,
+        "reasons_include": [
+          "provenance_invalid",
+          "candidate_hash_mismatch"
+        ]
+      }
+    },
+    {
+      "id": "elig_forged_pass_category_fail",
+      "kind": "eligibility",
+      "description": "A record that claims pass while a category did not pass is refused.",
+      "corrupt": "forged_pass_category_fail",
+      "expected": {
+        "created": false,
+        "started": false,
+        "reasons_include": [
+          "evaluation_category_not_pass"
+        ]
+      }
+    },
+    {
+      "id": "elig_newer_non_pass",
+      "kind": "eligibility",
+      "description": "A pass that was later superseded by a reject evaluation of the same candidate is refused.",
+      "corrupt": "newer_non_pass",
+      "expected": {
+        "created": false,
+        "started": false,
+        "reasons_include": [
+          "superseded_by_newer_evaluation"
+        ]
+      }
+    },
+    {
+      "id": "elig_candidate_hash_mismatch",
+      "kind": "eligibility",
+      "description": "A draft that claims a different candidate than the one Step 13 evaluated cannot start.",
+      "corrupt": "draft_claims_other_candidate",
+      "expected": {
+        "created": true,
+        "started": false,
+        "reasons_include": [
+          "candidate_changed_since_evaluation"
+        ]
+      }
+    },
+    {
+      "id": "elig_control_not_generation_zero",
+      "kind": "eligibility",
+      "description": "A draft whose control hash is not Generation 0 cannot start.",
+      "corrupt": "draft_control_not_gen0",
+      "expected": {
+        "created": true,
+        "started": false,
+        "reasons_include": [
+          "control_not_generation_zero"
+        ]
+      }
+    },
+    {
+      "id": "elig_already_running",
+      "kind": "eligibility",
+      "description": "Starting a running experiment again is refused.",
+      "corrupt": "start_twice",
+      "expected": {
+        "created": true,
+        "started": false,
+        "reasons_include": [
+          "experiment_already_running"
+        ]
+      }
+    },
+    {
+      "id": "elig_another_active",
+      "kind": "eligibility",
+      "description": "A second experiment on a page that already has an active one cannot start.",
+      "corrupt": "another_active",
+      "expected": {
+        "created": true,
+        "started": false,
+        "reasons_include": [
+          "another_experiment_active"
+        ]
+      }
+    },
+    {
+      "id": "fail_invalid_metric",
+      "kind": "eligibility",
+      "description": "A free-form primary metric name is refused before anything is stored.",
+      "config": {
+        "primary_metric": "conversion_rate"
+      },
+      "expected": {
+        "created": false,
+        "started": false,
+        "reasons_include": [
+          "primary_metric_unknown"
+        ]
+      }
+    },
+    {
+      "id": "fail_invalid_guardrail",
+      "kind": "eligibility",
+      "description": "A guardrail equal to the primary metric is refused.",
+      "config": {
+        "guardrail_metrics": [
+          "rage_click_session_rate"
+        ]
+      },
+      "expected": {
+        "created": false,
+        "started": false,
+        "reasons_include": [
+          "primary_metric_is_guardrail"
+        ]
+      }
+    },
+    {
+      "id": "fail_no_guardrails",
+      "kind": "eligibility",
+      "description": "An experiment without guardrails is refused.",
+      "config": {
+        "guardrail_metrics": []
+      },
+      "expected": {
+        "created": false,
+        "started": false,
+        "reasons_include": [
+          "guardrails_missing_or_too_many"
+        ]
+      }
+    },
+    {
+      "id": "fail_allocation_not_allowlisted",
+      "kind": "eligibility",
+      "description": "A 60% candidate allocation is refused.",
+      "config": {
+        "candidate_allocation_bp": 6000
+      },
+      "expected": {
+        "created": false,
+        "started": false,
+        "reasons_include": [
+          "allocation_not_allowlisted"
+        ]
+      }
+    },
+    {
+      "id": "fail_min_sample_too_small",
+      "kind": "eligibility",
+      "description": "A minimum sample below the operational floor is refused.",
+      "config": {
+        "minimum_sample_per_variant": 20
+      },
+      "expected": {
+        "created": false,
+        "started": false,
+        "reasons_include": [
+          "minimum_sample_invalid"
+        ]
+      }
+    },
+    {
+      "id": "alloc_deterministic",
+      "kind": "allocation",
+      "description": "Assigning the same 2000 sessions twice gives identical variants.",
+      "scenario": "deterministic",
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "alloc_same_session",
+      "kind": "allocation",
+      "description": "One session asked 100 times always gets the same variant.",
+      "scenario": "same_session",
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "alloc_independent_experiments",
+      "kind": "allocation",
+      "description": "Two experiments bucket the same sessions independently (about 50% agreement at 50/50).",
+      "scenario": "independent_experiments",
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "alloc_allowed_values",
+      "kind": "allocation",
+      "description": "Every allowlisted allocation is accepted and yields its configured share within 1 point over 20000 sessions.",
+      "scenario": "allowed_values",
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "alloc_invalid_values",
+      "kind": "allocation",
+      "description": "Zero, 100%, 51-99%, negative, float, boolean and string allocations are all refused.",
+      "scenario": "invalid_values",
+      "values": [
+        0,
+        10000,
+        5100,
+        9999,
+        -100,
+        1000.0,
+        true,
+        "1000",
+        null,
+        99,
+        101
+      ],
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "id": "alloc_boundary",
+      "kind": "allocation",
+      "description": "The candidate gets exactly the buckets below the allocation and never one above it.",
+      "scenario": "boundary",
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "exp_assignment_only",
+      "kind": "exposure",
+      "description": "Sessions that were assigned but never reported a render are not exposures.",
+      "scenario": "assignment_only",
+      "expected": {
+        "exposures": {
+          "control": 0,
+          "candidate": 0
+        }
+      }
+    },
+    {
+      "id": "exp_counts_after_render",
+      "kind": "exposure",
+      "description": "Each session that reports a successful render counts once in its assigned variant.",
+      "scenario": "exposed_after_render",
+      "expected": {
+        "exposures": {
+          "control": 5,
+          "candidate": 5
+        }
+      }
+    },
+    {
+      "id": "exp_duplicate_idempotent",
+      "kind": "exposure",
+      "description": "Three exposure events per session still count once.",
+      "scenario": "duplicate",
+      "expected": {
+        "exposures": {
+          "control": 5,
+          "candidate": 5
+        }
+      }
+    },
+    {
+      "id": "exp_wrong_variant_rejected",
+      "kind": "exposure",
+      "description": "An exposure claiming a variant the session was not assigned is not counted.",
+      "scenario": "wrong_variant",
+      "expected": {
+        "exposures": {
+          "control": 0,
+          "candidate": 0
+        }
+      }
+    },
+    {
+      "id": "exp_wrong_hash_rejected",
+      "kind": "exposure",
+      "description": "An exposure with a spec hash that is not the variant's is not counted.",
+      "scenario": "wrong_hash",
+      "expected": {
+        "exposures": {
+          "control": 0,
+          "candidate": 0
+        }
+      }
+    },
+    {
+      "id": "exp_not_running",
+      "kind": "exposure",
+      "description": "Exposures for a draft (not started) experiment are not counted.",
+      "scenario": "not_running",
+      "expected": {
+        "exposures": {
+          "control": 0,
+          "candidate": 0
+        }
+      }
+    },
+    {
+      "id": "ana_insufficient",
+      "kind": "analysis",
+      "description": "40 exposed sessions per variant is below the 100 floor: insufficient_data, whatever the rates.",
+      "control": {
+        "exposed": 40,
+        "outcomes": {
+          "rage_click_session_rate": 12
+        }
+      },
+      "candidate": {
+        "exposed": 40,
+        "outcomes": {
+          "rage_click_session_rate": 2
+        }
+      },
+      "expected": {
+        "assessment": "insufficient_data",
+        "reasons_include": [
+          "insufficient_samples"
+        ]
+      }
+    },
+    {
+      "id": "ana_equal",
+      "kind": "analysis",
+      "description": "Identical outcomes: evidence ready, zero difference.",
+      "control": {
+        "exposed": 120,
+        "outcomes": {
+          "rage_click_session_rate": 30,
+          "form_error_session_rate": 12,
+          "signup_submit_session_rate": 40
+        }
+      },
+      "candidate": {
+        "exposed": 120,
+        "outcomes": {
+          "rage_click_session_rate": 30,
+          "form_error_session_rate": 12,
+          "signup_submit_session_rate": 40
+        }
+      },
+      "expected": {
+        "assessment": "evidence_ready",
+        "difference_sign": "zero"
+      }
+    },
+    {
+      "id": "ana_candidate_better",
+      "kind": "analysis",
+      "description": "Candidate numerically better on the primary (fewer rage-click sessions): evidence ready, NOT promoted.",
+      "control": {
+        "exposed": 120,
+        "outcomes": {
+          "rage_click_session_rate": 48,
+          "form_error_session_rate": 12,
+          "signup_submit_session_rate": 40
+        }
+      },
+      "candidate": {
+        "exposed": 120,
+        "outcomes": {
+          "rage_click_session_rate": 12,
+          "form_error_session_rate": 12,
+          "signup_submit_session_rate": 44
+        }
+      },
+      "expected": {
+        "assessment": "evidence_ready",
+        "difference_sign": "negative"
+      }
+    },
+    {
+      "id": "ana_candidate_worse",
+      "kind": "analysis",
+      "description": "Candidate numerically worse on the primary: evidence ready; the human decides.",
+      "control": {
+        "exposed": 120,
+        "outcomes": {
+          "rage_click_session_rate": 12,
+          "form_error_session_rate": 12,
+          "signup_submit_session_rate": 40
+        }
+      },
+      "candidate": {
+        "exposed": 120,
+        "outcomes": {
+          "rage_click_session_rate": 24,
+          "form_error_session_rate": 12,
+          "signup_submit_session_rate": 40
+        }
+      },
+      "expected": {
+        "assessment": "evidence_ready",
+        "difference_sign": "positive"
+      }
+    },
+    {
+      "id": "ana_higher_is_better_primary",
+      "kind": "analysis",
+      "description": "A higher-is-better primary (signup submits) that the candidate raises is still only evidence.",
+      "config": {
+        "primary_metric": "signup_submit_session_rate",
+        "guardrail_metrics": [
+          "form_error_session_rate",
+          "rage_click_session_rate"
+        ]
+      },
+      "control": {
+        "exposed": 120,
+        "outcomes": {
+          "signup_submit_session_rate": 36,
+          "form_error_session_rate": 12,
+          "rage_click_session_rate": 10
+        }
+      },
+      "candidate": {
+        "exposed": 120,
+        "outcomes": {
+          "signup_submit_session_rate": 60,
+          "form_error_session_rate": 12,
+          "rage_click_session_rate": 10
+        }
+      },
+      "expected": {
+        "assessment": "evidence_ready",
+        "difference_sign": "positive"
+      }
+    },
+    {
+      "id": "ana_guardrail_breach",
+      "kind": "analysis",
+      "description": "Form errors clearly worse for the candidate: stop_recommended (a flag; nothing is stopped automatically).",
+      "control": {
+        "exposed": 120,
+        "outcomes": {
+          "rage_click_session_rate": 40,
+          "form_error_session_rate": 10,
+          "signup_submit_session_rate": 40
+        }
+      },
+      "candidate": {
+        "exposed": 120,
+        "outcomes": {
+          "rage_click_session_rate": 10,
+          "form_error_session_rate": 50,
+          "signup_submit_session_rate": 40
+        }
+      },
+      "expected": {
+        "assessment": "stop_recommended",
+        "reasons_include": [
+          "guardrail_breach"
+        ]
+      }
+    },
+    {
+      "id": "ana_guardrail_breach_small_sample",
+      "kind": "analysis",
+      "description": "A clear guardrail breach is flagged even before the sample floor is reached.",
+      "control": {
+        "exposed": 60,
+        "outcomes": {
+          "form_error_session_rate": 2
+        }
+      },
+      "candidate": {
+        "exposed": 60,
+        "outcomes": {
+          "form_error_session_rate": 30
+        }
+      },
+      "expected": {
+        "assessment": "stop_recommended",
+        "reasons_include": [
+          "guardrail_breach",
+          "insufficient_samples"
+        ]
+      }
+    },
+    {
+      "id": "ana_guardrail_watch",
+      "kind": "analysis",
+      "description": "A worse-but-uncertain guardrail with enough data needs review.",
+      "control": {
+        "exposed": 120,
+        "outcomes": {
+          "rage_click_session_rate": 30,
+          "form_error_session_rate": 12,
+          "signup_submit_session_rate": 40
+        }
+      },
+      "candidate": {
+        "exposed": 120,
+        "outcomes": {
+          "rage_click_session_rate": 20,
+          "form_error_session_rate": 19,
+          "signup_submit_session_rate": 40
+        }
+      },
+      "expected": {
+        "assessment": "needs_review",
+        "reasons_include": [
+          "guardrail_watch"
+        ]
+      }
+    },
+    {
+      "id": "ana_zero_successes",
+      "kind": "analysis",
+      "description": "Zero rage clicks in both arms: rates 0, interval still defined, no relative difference.",
+      "control": {
+        "exposed": 110,
+        "outcomes": {
+          "signup_submit_session_rate": 30
+        }
+      },
+      "candidate": {
+        "exposed": 110,
+        "outcomes": {
+          "signup_submit_session_rate": 30
+        }
+      },
+      "expected": {
+        "assessment": "evidence_ready",
+        "difference_sign": "zero"
+      }
+    },
+    {
+      "id": "ana_all_successes",
+      "kind": "analysis",
+      "description": "Every session submitted in both arms (100%): intervals stay defined.",
+      "config": {
+        "primary_metric": "signup_submit_session_rate",
+        "guardrail_metrics": [
+          "form_error_session_rate"
+        ]
+      },
+      "control": {
+        "exposed": 110,
+        "outcomes": {
+          "signup_submit_session_rate": 110
+        }
+      },
+      "candidate": {
+        "exposed": 110,
+        "outcomes": {
+          "signup_submit_session_rate": 110
+        }
+      },
+      "expected": {
+        "assessment": "evidence_ready",
+        "difference_sign": "zero"
+      }
+    },
+    {
+      "id": "ana_error_burst_guardrail",
+      "kind": "analysis",
+      "description": "error_burst as a guardrail, from real signals: clearly worse -> stop_recommended.",
+      "config": {
+        "guardrail_metrics": [
+          "error_burst_session_rate",
+          "form_error_session_rate"
+        ]
+      },
+      "control": {
+        "exposed": 120,
+        "outcomes": {
+          "rage_click_session_rate": 30,
+          "error_burst_session_rate": 2,
+          "form_error_session_rate": 10
+        }
+      },
+      "candidate": {
+        "exposed": 120,
+        "outcomes": {
+          "rage_click_session_rate": 10,
+          "error_burst_session_rate": 30,
+          "form_error_session_rate": 40
+        }
+      },
+      "expected": {
+        "assessment": "stop_recommended",
+        "reasons_include": [
+          "guardrail_breach"
+        ]
+      }
+    },
+    {
+      "id": "ana_failure",
+      "kind": "analysis",
+      "description": "An analysis failure is recorded as needs_review with no conclusion.",
+      "control": {
+        "exposed": 110,
+        "outcomes": {
+          "rage_click_session_rate": 20
+        }
+      },
+      "candidate": {
+        "exposed": 110,
+        "outcomes": {
+          "rage_click_session_rate": 10
+        }
+      },
+      "fault": true,
+      "expected": {
+        "assessment": "needs_review",
+        "reasons_include": [
+          "analysis_error"
+        ]
+      }
+    },
+    {
+      "id": "fail_candidate_render_failure",
+      "kind": "analysis",
+      "description": "Candidate sessions whose render failed fell back to Generation 0: they are not exposures, and the analysis needs review.",
+      "control": {
+        "exposed": 110,
+        "outcomes": {
+          "rage_click_session_rate": 20
+        }
+      },
+      "candidate": {
+        "exposed": 105,
+        "outcomes": {
+          "rage_click_session_rate": 10
+        },
+        "fallback_sessions": 5
+      },
+      "expected": {
+        "assessment": "needs_review",
+        "reasons_include": [
+          "candidate_fallbacks"
+        ]
+      }
+    },
+    {
+      "id": "serve_assigned",
+      "kind": "serving",
+      "description": "A running, gate-approved experiment serves the assigned candidate spec.",
+      "scenario": "assigned",
+      "expected": {
+        "served": "assigned"
+      }
+    },
+    {
+      "id": "serve_none_running",
+      "kind": "serving",
+      "description": "No running experiment: the page renders bundled Generation 0 with no exposure.",
+      "scenario": "none_running",
+      "expected": {
+        "served": "none"
+      }
+    },
+    {
+      "id": "fail_candidate_unavailable",
+      "kind": "serving",
+      "description": "A running experiment whose candidate is not exactly the evaluated spec serves a fallback, never the candidate.",
+      "scenario": "candidate_hash_mismatch",
+      "expected": {
+        "served": "fallback"
+      }
+    },
+    {
+      "id": "db_allocation_not_allowlisted",
+      "kind": "db_constraint",
+      "description": "The database refuses a 33.33% allocation inserted directly.",
+      "config": {
+        "candidate_allocation_bp": 3333,
+        "control_allocation_bp": 6667
+      },
+      "expected": {
+        "accepted": false,
+        "constraint": "ck_experiment_candidate_allocation_allowlisted"
+      }
+    },
+    {
+      "id": "db_allocation_over_half",
+      "kind": "db_constraint",
+      "description": "The database refuses a 90% candidate allocation inserted directly.",
+      "config": {
+        "candidate_allocation_bp": 9000,
+        "control_allocation_bp": 1000
+      },
+      "expected": {
+        "accepted": false,
+        "constraint": "ck_experiment_candidate_allocation_allowlisted"
+      }
+    },
+    {
+      "id": "db_unknown_metric",
+      "kind": "db_constraint",
+      "description": "The database refuses an unknown primary metric.",
+      "config": {
+        "primary_metric": "revenue"
+      },
+      "expected": {
+        "accepted": false,
+        "constraint": "ck_experiment_primary_metric_is_known"
+      }
+    },
+    {
+      "id": "db_primary_as_guardrail",
+      "kind": "db_constraint",
+      "description": "The database refuses a guardrail list containing the primary metric.",
+      "config": {
+        "guardrail_metrics": [
+          "rage_click_session_rate"
+        ]
+      },
+      "expected": {
+        "accepted": false,
+        "constraint": "ck_experiment_guardrails_are_valid"
+      }
+    },
+    {
+      "id": "db_update_running_allocation",
+      "kind": "db_constraint",
+      "description": "A running experiment's allocation cannot be changed (configuration is immutable).",
+      "scenario": "update_running_allocation",
+      "expected": {
+        "accepted": false,
+        "constraint": "trigger:experiment configuration is immutable"
+      }
+    },
+    {
+      "id": "db_update_analysis",
+      "kind": "db_constraint",
+      "description": "An analysis record cannot be rewritten.",
+      "scenario": "update_analysis",
+      "expected": {
+        "accepted": false,
+        "constraint": "trigger:experiment_analysis rows are immutable"
+      }
+    },
+    {
+      "id": "db_completed_back_to_running",
+      "kind": "db_constraint",
+      "description": "A completed experiment cannot be restarted.",
+      "scenario": "completed_to_running",
+      "expected": {
+        "accepted": false,
+        "constraint": "trigger:experiment transition completed -> running is not allowed"
+      }
+    },
+    {
+      "id": "win_running_exposure_counted",
+      "kind": "window",
+      "description": "An exposure that happens and is processed while running is counted.",
+      "timeline": [
+        {
+          "do": "expose",
+          "minute": 10,
+          "session": 0
+        }
+      ],
+      "expected": {
+        "exposures": {
+          "control": 0,
+          "candidate": 1
+        },
+        "windows": 1
+      }
+    },
+    {
+      "id": "paused_exposure_refused",
+      "kind": "window",
+      "description": "Exposures processed after a pause are refused: a delayed one from before the pause, one during it, and one arriving after resume that happened during the pause.",
+      "timeline": [
+        {
+          "do": "pause",
+          "minute": 30,
+          "session": 0
+        },
+        {
+          "do": "expose",
+          "minute": 10,
+          "session": 0
+        },
+        {
+          "do": "expose",
+          "minute": 35,
+          "session": 1
+        },
+        {
+          "do": "resume",
+          "minute": 45,
+          "session": 0
+        },
+        {
+          "do": "expose",
+          "minute": 40,
+          "session": 2
+        }
+      ],
+      "expected": {
+        "exposures": {
+          "control": 0,
+          "candidate": 0
+        },
+        "windows": 2
+      }
+    },
+    {
+      "id": "terminal_exposure_refused",
+      "kind": "window",
+      "description": "An exposure processed after completion is refused, even if it happened while running.",
+      "timeline": [
+        {
+          "do": "complete",
+          "minute": 30,
+          "session": 0
+        },
+        {
+          "do": "expose",
+          "minute": 10,
+          "session": 0
+        }
+      ],
+      "expected": {
+        "exposures": {
+          "control": 0,
+          "candidate": 0
+        },
+        "windows": 1
+      }
+    },
+    {
+      "id": "paused_outcome_not_attributed",
+      "kind": "window",
+      "description": "Outcomes a session produces while the experiment is paused count for neither arm.",
+      "timeline": [
+        {
+          "do": "expose",
+          "minute": 10,
+          "session": 0
+        },
+        {
+          "do": "pause",
+          "minute": 30,
+          "session": 0
+        },
+        {
+          "do": "rage",
+          "minute": 35,
+          "session": 0
+        },
+        {
+          "do": "form_error",
+          "minute": 36,
+          "session": 0
+        },
+        {
+          "do": "resume",
+          "minute": 45,
+          "session": 0
+        }
+      ],
+      "expected": {
+        "exposures": {
+          "control": 0,
+          "candidate": 1
+        },
+        "successes": {
+          "rage_click_session_rate": [
+            0,
+            0
+          ],
+          "form_error_session_rate": [
+            0,
+            0
+          ]
+        },
+        "windows": 2
+      }
+    },
+    {
+      "id": "resumed_outcome_attributed",
+      "kind": "window",
+      "description": "After resume, outcomes count again; a delayed outcome that happened during the pause still does not.",
+      "timeline": [
+        {
+          "do": "expose",
+          "minute": 10,
+          "session": 0
+        },
+        {
+          "do": "expose",
+          "minute": 12,
+          "session": 1
+        },
+        {
+          "do": "pause",
+          "minute": 30,
+          "session": 0
+        },
+        {
+          "do": "resume",
+          "minute": 45,
+          "session": 0
+        },
+        {
+          "do": "rage",
+          "minute": 50,
+          "session": 0
+        },
+        {
+          "do": "form_error",
+          "minute": 35,
+          "session": 1
+        }
+      ],
+      "expected": {
+        "exposures": {
+          "control": 0,
+          "candidate": 2
+        },
+        "successes": {
+          "rage_click_session_rate": [
+            0,
+            1
+          ],
+          "form_error_session_rate": [
+            0,
+            0
+          ]
+        },
+        "windows": 2
+      }
+    },
+    {
+      "id": "terminal_outcome_not_attributed",
+      "kind": "window",
+      "description": "Outcomes after completion never count; one that happened before completion but arrived after still does.",
+      "timeline": [
+        {
+          "do": "expose",
+          "minute": 10,
+          "session": 0
+        },
+        {
+          "do": "expose",
+          "minute": 12,
+          "session": 1
+        },
+        {
+          "do": "complete",
+          "minute": 60,
+          "session": 0
+        },
+        {
+          "do": "rage",
+          "minute": 70,
+          "session": 0
+        },
+        {
+          "do": "form_error",
+          "minute": 71,
+          "session": 0
+        },
+        {
+          "do": "form_error",
+          "minute": 50,
+          "session": 1
+        }
+      ],
+      "expected": {
+        "exposures": {
+          "control": 0,
+          "candidate": 2
+        },
+        "successes": {
+          "rage_click_session_rate": [
+            0,
+            0
+          ],
+          "form_error_session_rate": [
+            0,
+            1
+          ]
+        },
+        "windows": 1
+      }
+    },
+    {
+      "id": "stopped_outcome_not_attributed",
+      "kind": "window",
+      "description": "Outcomes after an early stop never count.",
+      "timeline": [
+        {
+          "do": "expose",
+          "minute": 10,
+          "session": 0
+        },
+        {
+          "do": "stop",
+          "minute": 20,
+          "session": 0
+        },
+        {
+          "do": "rage",
+          "minute": 25,
+          "session": 0
+        },
+        {
+          "do": "form_error",
+          "minute": 26,
+          "session": 0
+        }
+      ],
+      "expected": {
+        "exposures": {
+          "control": 0,
+          "candidate": 1
+        },
+        "successes": {
+          "rage_click_session_rate": [
+            0,
+            0
+          ],
+          "form_error_session_rate": [
+            0,
+            0
+          ]
+        },
+        "windows": 1
+      }
+    },
+    {
+      "id": "multiple_collection_windows_correct",
+      "kind": "window",
+      "description": "Three running windows around two pauses and a completion: only outcomes inside a window count; a rerun with the same as_of is identical.",
+      "timeline": [
+        {
+          "do": "expose",
+          "minute": 10,
+          "session": 0
+        },
+        {
+          "do": "expose",
+          "minute": 12,
+          "session": 1
+        },
+        {
+          "do": "expose",
+          "minute": 11,
+          "session": 2
+        },
+        {
+          "do": "expose",
+          "minute": 13,
+          "session": 3
+        },
+        {
+          "do": "expose",
+          "minute": 14,
+          "session": 4
+        },
+        {
+          "do": "expose",
+          "minute": 15,
+          "session": 5
+        },
+        {
+          "do": "rage",
+          "minute": 20,
+          "session": 0
+        },
+        {
+          "do": "pause",
+          "minute": 30,
+          "session": 0
+        },
+        {
+          "do": "rage",
+          "minute": 35,
+          "session": 1
+        },
+        {
+          "do": "resume",
+          "minute": 45,
+          "session": 0
+        },
+        {
+          "do": "form_error",
+          "minute": 50,
+          "session": 2
+        },
+        {
+          "do": "pause",
+          "minute": 60,
+          "session": 0
+        },
+        {
+          "do": "form_error",
+          "minute": 65,
+          "session": 3
+        },
+        {
+          "do": "resume",
+          "minute": 75,
+          "session": 0
+        },
+        {
+          "do": "rage",
+          "minute": 80,
+          "session": 4
+        },
+        {
+          "do": "complete",
+          "minute": 90,
+          "session": 0
+        },
+        {
+          "do": "form_error",
+          "minute": 100,
+          "session": 5
+        }
+      ],
+      "expected": {
+        "exposures": {
+          "control": 0,
+          "candidate": 6
+        },
+        "successes": {
+          "rage_click_session_rate": [
+            0,
+            2
+          ],
+          "form_error_session_rate": [
+            0,
+            1
+          ],
+          "signup_submit_session_rate": [
+            0,
+            0
+          ]
+        },
+        "windows": 3
+      },
+      "rerun": true
+    },
+    {
+      "id": "boundary_signal_not_attributed",
+      "kind": "window",
+      "description": "A rage-click signal whose evidence straddles the pause boundary cannot be attributed: not counted, reported as excluded.",
+      "timeline": [
+        {
+          "do": "expose",
+          "minute": 10,
+          "session": 0
+        },
+        {
+          "do": "pause",
+          "minute": 30,
+          "session": 0
+        },
+        {
+          "do": "straddle_rage",
+          "minute": 30,
+          "session": 0
+        },
+        {
+          "do": "resume",
+          "minute": 45,
+          "session": 0
+        }
+      ],
+      "expected": {
+        "exposures": {
+          "control": 0,
+          "candidate": 1
+        },
+        "successes": {
+          "rage_click_session_rate": [
+            0,
+            0
+          ]
+        },
+        "boundary_signals_excluded": 1,
+        "windows": 2
+      }
+    },
+    {
+      "id": "db_duplicate_transition",
+      "kind": "db_constraint",
+      "description": "A running experiment cannot be 'started' again (duplicate transition).",
+      "scenario": "duplicate_transition",
+      "expected": {
+        "accepted": false,
+        "constraint": "trigger:experiment transition running -> running is not allowed"
+      }
+    },
+    {
+      "id": "db_transition_time_not_increasing",
+      "kind": "db_constraint",
+      "description": "A transition cannot be dated before the previous one.",
+      "scenario": "time_not_increasing",
+      "expected": {
+        "accepted": false,
+        "constraint": "trigger:experiment status_changed_at must increase"
+      }
+    },
+    {
+      "id": "db_insert_running",
+      "kind": "db_constraint",
+      "description": "An experiment cannot be inserted already running (it must start as a draft through the gate).",
+      "scenario": "insert_running",
+      "expected": {
+        "accepted": false,
+        "constraint": "trigger:experiments are created as draft"
+      }
+    },
+    {
+      "id": "db_forge_lifecycle_event",
+      "kind": "db_constraint",
+      "description": "A fabricated pause in the lifecycle history is refused.",
+      "scenario": "forge_lifecycle_event",
+      "expected": {
+        "accepted": false,
+        "constraint": "trigger:lifecycle event does not match the experiment state"
+      }
+    },
+    {
+      "id": "db_update_lifecycle_event",
+      "kind": "db_constraint",
+      "description": "Lifecycle history cannot be rewritten.",
+      "scenario": "update_lifecycle_event",
+      "expected": {
+        "accepted": false,
+        "constraint": "trigger:experiment_lifecycle_event rows are immutable"
+      }
+    },
+    {
+      "id": "db_delete_lifecycle_event",
+      "kind": "db_constraint",
+      "description": "Lifecycle history cannot be deleted.",
+      "scenario": "delete_lifecycle_event",
+      "expected": {
+        "accepted": false,
+        "constraint": "trigger:experiment_lifecycle_event rows are immutable"
+      }
+    }
+  ]
+}

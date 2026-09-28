@@ -4,6 +4,12 @@
 from darwin.db.models.behavior_signal import BehaviorSignal
 from darwin.db.models.decision import DecisionRun
 from darwin.db.models.evaluation import CandidateEvaluationRun
+from darwin.db.models.experiment import (
+    Experiment,
+    ExperimentAnalysis,
+    ExperimentExposure,
+    ExperimentLifecycleEvent,
+)
 from darwin.db.models.hypothesis import Hypothesis, HypothesisRun
 from darwin.db.models.knowledge import KnowledgeChunk, KnowledgeDocument, RetrievalRun
 from darwin.db.models.mutation import MutationRun, UISpecVersion
@@ -15,6 +21,10 @@ __all__ = [
     "BehaviorSignal",
     "CandidateEvaluationRun",
     "DecisionRun",
+    "Experiment",
+    "ExperimentAnalysis",
+    "ExperimentExposure",
+    "ExperimentLifecycleEvent",
     "Hypothesis",
     "HypothesisRun",
     "KnowledgeChunk",

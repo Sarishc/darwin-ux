@@ -19,6 +19,8 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from darwin.db.models import UserEvent
+from darwin.experiments.exposure import ExposureResult, record_exposure
+from darwin.experiments.vocabulary import EXPOSURE_EVENT
 from darwin.queue.base import MessageQueue, OutgoingMessage, PermanentMessageError
 from darwin.signals.service import ReconcileResult, reconcile_session_signals
 from darwin.telemetry.messages import TELEMETRY_EVENT, TelemetryMessageV1, parse_message
@@ -115,6 +117,7 @@ def ingest_event(session: Session, event: TelemetryEvent) -> IngestionResult:
 class TelemetryOutcome:
     stored: IngestionResult
     signals: ReconcileResult
+    exposure: ExposureResult | None = None  # experiment_exposure events only
 
 
 def _describe(error: ValidationError) -> str:
@@ -134,6 +137,10 @@ def process_telemetry_message(session: Session, body: dict[str, Any]) -> Telemet
        when step 2 found a duplicate. A duplicate here usually means an
        earlier delivery stored the event and then crashed before (or during)
        reconciliation; skipping would leave that session's signals stale.
+    4. For an `experiment_exposure` event, record the exposure in a third
+       transaction — also on duplicates, for the same reason. The exposure's
+       UNIQUE(experiment, session) makes this idempotent. An invalid exposure
+       is refused (not stored as an exposure), never an error.
 
     The caller acknowledges the queue message only after this returns.
     """
@@ -143,4 +150,5 @@ def process_telemetry_message(session: Session, body: dict[str, Any]) -> Telemet
         raise PermanentMessageError(_describe(error)) from None
     stored = ingest_event(session, event)
     signals = reconcile_session_signals(session, event.session_id)
-    return TelemetryOutcome(stored=stored, signals=signals)
+    exposure = record_exposure(session, event) if event.event_type == EXPOSURE_EVENT else None
+    return TelemetryOutcome(stored=stored, signals=signals, exposure=exposure)

@@ -28,10 +28,34 @@ export const COMPONENT_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
 
 export type FormErrorReason = "required" | "invalid_format";
 
+/** Experiments (Step 14). The backend owns assignment; these only report what rendered. */
+export type ExperimentVariant = "control" | "candidate";
+export type ExperimentFallbackReason =
+  "spec_invalid" | "render_error" | "spec_unavailable" | "spec_hash_mismatch" | "assignment_error";
+export const EXPERIMENT_KEY_PATTERN = /^[a-z][a-z0-9_]{2,63}$/;
+export const SPEC_HASH_PATTERN = /^[0-9a-f]{64}$/;
+const VARIANTS: readonly string[] = ["control", "candidate"];
+const FALLBACK_REASONS: readonly string[] = [
+  "spec_invalid",
+  "render_error",
+  "spec_unavailable",
+  "spec_hash_mismatch",
+  "assignment_error",
+];
+
 export type TrackedEvent =
   | { type: "page_view"; page: string }
   | { type: "button_click"; component: string }
-  | { type: "form_error"; component: string; field: FormFieldName; reason: FormErrorReason };
+  | { type: "form_error"; component: string; field: FormFieldName; reason: FormErrorReason }
+  // Sent once, only AFTER the assigned variant rendered successfully.
+  | {
+      type: "experiment_exposure";
+      experiment: string;
+      variant: ExperimentVariant;
+      specHash: string;
+    }
+  // The assigned variant could not be rendered; Generation 0 was shown instead (not an exposure).
+  | { type: "experiment_fallback"; experiment: string; reason: ExperimentFallbackReason };
 
 export interface TelemetryEventBody {
   event_id: string;
@@ -75,6 +99,28 @@ export function buildEventBody(
     case "form_error":
       if (!COMPONENT_PATTERN.test(event.component)) return null;
       payload = { ...common, component: event.component, field: event.field, reason: event.reason };
+      break;
+    case "experiment_exposure":
+      if (
+        !EXPERIMENT_KEY_PATTERN.test(event.experiment) ||
+        !VARIANTS.includes(event.variant) ||
+        !SPEC_HASH_PATTERN.test(event.specHash)
+      )
+        return null;
+      payload = {
+        ...common,
+        experiment: event.experiment,
+        variant: event.variant,
+        spec_hash: event.specHash,
+      };
+      break;
+    case "experiment_fallback":
+      if (
+        !EXPERIMENT_KEY_PATTERN.test(event.experiment) ||
+        !FALLBACK_REASONS.includes(event.reason)
+      )
+        return null;
+      payload = { ...common, experiment: event.experiment, reason: event.reason };
       break;
     default:
       return null;

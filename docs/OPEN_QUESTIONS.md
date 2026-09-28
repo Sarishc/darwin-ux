@@ -47,7 +47,9 @@ Recommendation: a small demo app (sign-up or checkout flow) inside the Next.js p
 
 To decide: which flow; which components go in the initial registry; is there ever a real application DarwinUX should evolve?
 
-### B4. Source of experiment traffic (blocks Step 8)
+### B4. Source of experiment traffic (blocks Step 8) — partly addressed in Step 14
+
+Step 14 labels every experiment `traffic_source = simulated | real` (stored, and repeated in every analysis report). All traffic so far is simulated: scripted sessions through the real worker path plus manual browser sessions. There is still no simulator of realistic user behaviour.
 
 A portfolio project has no real users, so experiments cannot produce real UX evidence.
 
@@ -66,7 +68,11 @@ Decide during the step that needs it; a sensible default is given.
 | N5 | Local trace viewer | Jaeger via OTel collector |
 | N6 | Prompt storage | Prompt files in git, version ID recorded on every `ModelCall` |
 | N7 | How much LangChain to use | Only document loaders/splitters where they save time; LangGraph for orchestration |
-| N8 | Experiment statistics | Fixed-horizon test with pre-registered sample size; sequential testing later |
+| N8 | Experiment statistics | Step 14: Wilson intervals per variant + Newcombe difference interval, fixed pre-registered primary metric, an operational floor of 100 exposed sessions per variant (not a power calculation). Still open: a real power/sample-size calculation, sequential testing or alpha spending for repeated looks, multiple-guardrail correction, sample-ratio-mismatch check |
+| N18 | No completion event | Generation 0 emits no "signup completed" event, so task success/completion cannot be measured; `signup_submit_session_rate` counts attempts. Adding a completion event is a telemetry-contract change for a later step |
+| N19 | Automatic rollback on guardrail breach | The architecture planned it; Step 14 only flags `stop_recommended` and a human runs `make experiment-stop`. Decide the rule (and its false-alarm control under repeated looks) before automating |
+| N21 | Client clock vs server window boundaries | Collection windows are server time; exposure/outcome times are the client's clock. Events are also required to arrive after their window opened, but a skewed client clock can still move an event across a pause boundary. Decide whether to attribute by server receipt time (robust to skew, sensitive to queue lag) or to estimate per-session clock offset |
+| N20 | Visible generation label differs between arms | The SpecPage footer shows "Generation 0" vs "Generation 1": a small visible difference between variants, and "Generation 1" is not a promoted generation. Decide whether the badge should show "candidate" or be hidden inside experiments |
 | N9 | Evolution Lab authentication | Single-user auth sufficient for approvals; no AI-created approvals ever |
 | N10 | Headless browser / accessibility tooling for the sandbox | Step 13 uses jsdom + Testing Library + axe-core (no browser): enough for behaviour, telemetry and rule-based accessibility. A real browser is still needed for colour contrast, layout, visual regression and real timing |
 | N17 | Inline validation without per-field display | The Step 13 harness found that `validation: inline` shows nothing when `error_display` is `summary` (errors only render per-field). Decide whether the renderer should surface inline errors in summary mode, or the mutation surface should couple the two |

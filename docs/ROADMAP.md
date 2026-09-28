@@ -123,7 +123,9 @@ Built: explicit mutation surface, strict MutationSpec (replace-only, semantic ta
 **Learn:** Next.js + TypeScript application structure, typed API clients.
 **Exit:** a human can approve or reject from the UI and the graph resumes.
 
-### Step 8 — Experiments and Generation 1
+### Step 8 — Experiments and Generation 1 — controlled experiments ✅ (built as "Step 14"); Generation 1 / promotion not yet
+
+Step 14 built: deterministic eligibility (re-derived Step 13 pass) and start gate, human-only CLI lifecycle, stable-hash assignment served by the backend with allowlisted basis-point allocations, exposure-after-render through the telemetry pipeline (idempotent), four session-level metrics on existing telemetry, Wilson / Newcombe analysis with an `insufficient_data` floor and guardrail flags, immutable lifecycle history with active collection windows (pause/resume never mixes arms), immutable analysis records (migration 0010), `/demo/experiment`, and a 66-case golden set (fail-open 0). Not yet: sample-ratio-mismatch check, automatic rollback (flag only), human promotion → Generation 1, experiment report → Product Memory, a flag table / Experiment Manager worker (assignment is stateless instead).
 
 - Flag table + deterministic cohort assignment; Experiment Manager worker.
 - Pre-registered primary/guardrail metrics; fixed-horizon analysis; sample-ratio-mismatch check; automatic rollback.

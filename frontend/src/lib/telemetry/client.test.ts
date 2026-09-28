@@ -64,6 +64,51 @@ describe("event body", () => {
   });
 });
 
+describe("experiment events", () => {
+  const hash = "c".repeat(64);
+
+  it("an exposure carries only the experiment key, variant and spec hash", () => {
+    const event = {
+      type: "experiment_exposure",
+      experiment: "rage_fix_pricing",
+      variant: "candidate",
+      specHash: hash,
+    } as const;
+    const body = buildEventBody(event, options);
+
+    expect(body?.event_type).toBe("experiment_exposure");
+    expect(body?.payload).toEqual({
+      generation: 0,
+      experiment: "rage_fix_pricing",
+      variant: "candidate",
+      spec_hash: hash,
+    });
+  });
+
+  it("a fallback carries only the experiment key and a reason code", () => {
+    const event = {
+      type: "experiment_fallback",
+      experiment: "rage_fix_pricing",
+      reason: "render_error",
+    } as const;
+
+    expect(buildEventBody(event, options)?.payload).toEqual({
+      generation: 0,
+      experiment: "rage_fix_pricing",
+      reason: "render_error",
+    });
+  });
+
+  it.each([
+    { type: "experiment_exposure", experiment: "Bad Key!", variant: "candidate", specHash: hash },
+    { type: "experiment_exposure", experiment: "rage_fix", variant: "treatment", specHash: hash },
+    { type: "experiment_exposure", experiment: "rage_fix", variant: "control", specHash: "abc" },
+    { type: "experiment_fallback", experiment: "rage_fix", reason: "because" },
+  ])("drops a malformed experiment event %#", (event) => {
+    expect(buildEventBody(event as never, options)).toBeNull();
+  });
+});
+
 describe("sending", () => {
   it("POSTs JSON to the telemetry endpoint without cookies", async () => {
     const fetchImpl = okFetch();

@@ -160,6 +160,20 @@ A finding from the harness: `validation: inline` alone has **no visible effect**
 
 **Still future:** human approval of candidates, experiment creation, traffic allocation, statistical analysis, promotion and rollback; browser-based checks (contrast, layout, visual regression, real performance).
 
+## Current Implementation (Step 14): Controlled Experiments — no agent involved
+
+Step 14 adds **no agent, no model call and no Jev/Muse control**. Experiments are deliberately outside the AI subsystems (`backend/src/darwin/experiments/`): eligibility, the start gate, traffic assignment (stable hashing), exposure recording and the statistics are deterministic code; creating, starting, pausing, stopping, completing and analyzing are explicit human CLI commands (`make experiment-*`; `start` requires retyping the experiment key). There is no HTTP route or tool that lets an agent create or start an experiment, choose an allocation, or read a result as a decision.
+
+| Question | Who answers | How |
+|---|---|---|
+| May this candidate enter an experiment? | Deterministic | the persisted Step 13 `pass`, re-derived (never a claim in the request) |
+| Should it start now? | **Human** | explicit CLI start after the start gate |
+| Which variant does a session see? | Deterministic | `sha256(key:session) % 10 000` vs allowlisted basis points, served by the backend |
+| What happened? | Deterministic | per-variant session rates, Wilson / Newcombe 95% intervals, guardrail flags |
+| Is the candidate better? Promote it? | **Human** (later step) | nothing in Step 14 declares a winner or promotes |
+
+Future LLM/Jev involvement (e.g. an advisory read of an experiment report) must stay advisory and fail closed; it may never change allocation or status.
+
 ## Responsibility Analysis
 
 ### 1. Signal Detection (Observer)
