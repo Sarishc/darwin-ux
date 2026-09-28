@@ -104,7 +104,7 @@ def test_post_queues_durably_and_processes_nothing(
     assert _count(connection, BehaviorSignal, session_id=uuid.UUID(body["session_id"])) == 0
 
 
-def test_queued_body_is_the_v1_message_without_server_fields(
+def test_queued_body_is_the_v2_message_without_server_fields(
     producer: TestClient, connection: Connection
 ) -> None:
     body = _event(str(uuid.uuid4()), 0.0)
@@ -115,8 +115,9 @@ def test_queued_body_is_the_v1_message_without_server_fields(
     )
 
     assert stored is not None
-    assert stored["schema_version"] == 1
+    assert stored["schema_version"] == 2  # Step 15: v2 adds the optional UI attribution
     assert {"id", "received_at"}.isdisjoint(stored)
+    assert stored["ui_spec_version_id"] is None  # a claim, verified only by the worker
 
 
 # ---- The worker processes -----------------------------------------------------------

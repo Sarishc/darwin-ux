@@ -60,6 +60,10 @@ Beyond "is it up", AI components need quality monitoring over time:
 - **Online sampling for evaluation:** a small sample of production runs is re-scored asynchronously by LLM judges and queued for occasional human review (EVALUATION_STRATEGY.md).
 - **Simulated vs. real:** all metrics derived from experiments carry `traffic_source`, and dashboards never mix the two silently.
 
+## Promotion and Rollback Logs (Step 15)
+
+Structured log lines (`darwin.generations.service`): `promotion decision recorded` (approval id, decision, page, target generation, reviewer), `generation promoted` (promotion id, approval id, page, from → to, reviewer), `generation rolled back` (rollback id, page, from → to, reviewer), `generation change refused` (page, reason codes) and `promotion refused by the database` (the constraint or trigger). Never logged: specs, analysis reports, raw events, session ids, form values, prompts, reasons typed by the reviewer, credentials. The durable audit trail is the immutable database records, not the logs.
+
 ## Alerting Philosophy
 
 - Alert on **symptoms that need action** (DLQ has messages, spend over budget, guardrail breach), not on every metric.

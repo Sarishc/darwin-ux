@@ -18,6 +18,7 @@
  */
 import { Component, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
+import { ActiveGenerationPage } from "@/components/ActiveGenerationPage";
 import { SpecPage } from "@/components/SpecPage";
 import { requestAssignment } from "@/lib/experiments/assignment";
 import {
@@ -28,10 +29,7 @@ import {
 } from "@/lib/telemetry/client";
 import { DARWIN_API_BASE_URL } from "@/lib/telemetry/config";
 import { getSessionId } from "@/lib/telemetry/session";
-import generation0 from "@/ui-spec/generation-0.json";
-import { parseUiSpec, type UiSpec, uiSpec } from "@/ui-spec/schema";
-
-const GENERATION_0 = parseUiSpec(generation0);
+import { type UiSpec, uiSpec } from "@/ui-spec/schema";
 
 type View =
   | { kind: "loading" }
@@ -42,6 +40,7 @@ type View =
       experiment: string;
       variant: ExperimentVariant;
       specHash: string;
+      specVersionId?: string;
       spec: UiSpec;
     };
 
@@ -136,6 +135,7 @@ export function ExperimentPage({
         experiment: a.experiment_key,
         variant: a.variant,
         specHash: a.spec_hash,
+        specVersionId: a.spec_version_id,
         spec: parsed.data,
       });
     });
@@ -145,9 +145,11 @@ export function ExperimentPage({
   }, [baseUrl, fetchImpl, page, sessionId]);
 
   const generation = view.kind === "variant" ? view.spec.generation : 0;
+  const specHash = view.kind === "variant" ? view.specHash : undefined;
+  const specVersionId = view.kind === "variant" ? view.specVersionId : undefined;
   const client = useMemo(
-    () => telemetry ?? createTelemetry({ baseUrl, generation }),
-    [telemetry, baseUrl, generation],
+    () => telemetry ?? createTelemetry({ baseUrl, generation, specHash, specVersionId }),
+    [telemetry, baseUrl, generation, specHash, specVersionId],
   );
 
   const reported = useRef(false);
@@ -170,9 +172,20 @@ export function ExperimentPage({
       </main>
     );
   }
-  if (view.kind !== "variant") return renderSpec(GENERATION_0, client);
+  // No experiment, or a fallback: the page's ACTIVE generation (the control), never a
+  // candidate; the bundled Generation 0 when the backend cannot say (Step 15).
+  if (view.kind !== "variant") {
+    return (
+      <ActiveGenerationPage
+        page={page}
+        baseUrl={baseUrl}
+        fetchImpl={fetchImpl}
+        telemetry={telemetry}
+      />
+    );
+  }
 
-  const { experiment, variant, specHash } = view;
+  const { experiment, variant } = view;
   return (
     <RenderBoundary
       onError={() => setView({ kind: "fallback", experiment, reason: "render_error" })}
@@ -184,7 +197,7 @@ export function ExperimentPage({
             type: "experiment_exposure",
             experiment,
             variant,
-            specHash,
+            specHash: view.specHash,
           })
         }
       />

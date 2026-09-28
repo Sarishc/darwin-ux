@@ -30,9 +30,10 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from darwin.db.models import DecisionRun, Hypothesis, ResearchRun, UISpecVersion
+from darwin.db.models import BehaviorSignal, DecisionRun, Hypothesis, ResearchRun, UISpecVersion
 from darwin.decisions.request import DecisionInputError, build_decision_request
 
 from .specs import current_baseline
@@ -164,7 +165,42 @@ def load_proceed_context(
     run = session.get(ResearchRun, decision.research_run_id)
     if run is None or run.hypothesis_id != decision.hypothesis_id:
         raise StaleProvenanceError("provenance_mismatch", "decision and research disagree")
+    _require_signal_from_source(session, run.signal_id, baseline)
     return context
+
+
+def _require_signal_from_source(
+    session: Session, signal_id: uuid.UUID, source: UISpecVersion
+) -> None:
+    """Fail closed when the signal's evidence is not proven to come from the source spec.
+
+    Step 15: a signal observed on another generation (or on an experiment candidate)
+    must not drive a mutation of the current one. Unknown attribution (every event
+    before Step 15) is accepted only while the page has never had a promoted
+    generation — then there is only one generation it could have come from.
+    """
+    signal = session.scalar(select(BehaviorSignal).where(BehaviorSignal.signal_id == signal_id))
+    if signal is None:
+        raise StaleProvenanceError("signal_missing", "the research signal no longer exists")
+    if signal.ui_attribution == "mixed":
+        raise StaleProvenanceError(
+            "signal_generation_mixed", "the signal's evidence spans several UI versions"
+        )
+    if signal.ui_attribution == "single" and signal.ui_spec_version_id != source.id:
+        raise StaleProvenanceError(
+            "signal_generation_mismatch", "the signal was observed on a different UI version"
+        )
+    if signal.ui_attribution == "unknown":
+        promoted = session.scalar(
+            select(UISpecVersion.id)
+            .where(UISpecVersion.page_id == source.page_id, UISpecVersion.status == "promoted")
+            .limit(1)
+        )
+        if promoted is not None:
+            raise StaleProvenanceError(
+                "signal_generation_unknown",
+                "the page has several generations and the signal's is unknown",
+            )
 
 
 def affected_targets(spec: dict[str, Any], component: str | None) -> list[Target]:

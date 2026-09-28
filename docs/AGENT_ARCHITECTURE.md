@@ -174,6 +174,20 @@ Step 14 adds **no agent, no model call and no Jev/Muse control**. Experiments ar
 
 Future LLM/Jev involvement (e.g. an advisory read of an experiment report) must stay advisory and fail closed; it may never change allocation or status.
 
+## Current Implementation (Step 15): Promotion and Rollback — humans only
+
+Step 15 again adds **no agent and no model call**. The authority boundary:
+
+| Question | Who answers | How |
+|---|---|---|
+| Is this analysed candidate eligible for a decision? | Deterministic | `promotion_policy.v1`, re-derived from the database; no overrides |
+| Approve or reject? | **Human** | `make promotion-approve` / `promotion-reject` (self-asserted reviewer, reason) |
+| Activate it now? | **Human** | `make generation-promote CONFIRM=<page>:<generation>`; the gate is re-derived at that moment |
+| Roll back? | **Human** | `make generation-rollback CONFIRM=<page>:<generation>` |
+| Which generation does /demo serve? | Deterministic | the `active_generation` pointer |
+
+An ExperimentAnalysis may make a candidate *eligible for review*; it never grants authority. LangGraph, LLMs, Jev, Muse, `RulesDecider`, the sandbox evaluator and the experiment analysis have no path to approval, promotion or rollback.
+
 ## Responsibility Analysis
 
 ### 1. Signal Detection (Observer)

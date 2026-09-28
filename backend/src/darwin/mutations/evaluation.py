@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import Connection, Engine, update
+from sqlalchemy import Connection, Engine, select, update
 from sqlalchemy.orm import Session
 
 from darwin.config import Settings
@@ -50,6 +50,7 @@ from .fixture import FixtureMode, FixtureMutationGenerator
 from .frontend import FrontendValidatorUnavailableError, validate_with_frontend
 from .llm import LLMMutationGenerator
 from .port import MutationGenerator
+from .request import DEMO_PAGE_ID
 from .service import generate_candidate
 from .specs import import_generation_zero
 from .surface import MUTABLE, iter_targets
@@ -373,6 +374,27 @@ def run_evaluation(
     return out
 
 
+def single_generation_problem(engine: Engine) -> str | None:
+    """This golden set (and the Step 13 chain cases) run on the REAL demo page and assume
+    it has only ever had Generation 0. After a real promotion (Step 15) that is false: a
+    Generation 1 exists, and pre-Step-15 signals are correctly refused as `unknown`
+    attribution. Say so plainly instead of failing obscurely."""
+    with engine.connect() as connection:
+        promoted = connection.scalar(
+            select(UISpecVersion.id)
+            .where(UISpecVersion.page_id == DEMO_PAGE_ID, UISpecVersion.status != "candidate")
+            .where(UISpecVersion.generation != 0)
+            .limit(1)
+        )
+    if promoted is None:
+        return None
+    return (
+        f"the {DEMO_PAGE_ID} page in this database has generations beyond Generation 0 "
+        "(a real promotion). This golden set assumes a single-generation page; run it on a "
+        "database without promotions (e.g. after `make migrate` on a fresh database)."
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Golden mutation evaluation.")
     parser.add_argument("--output", type=Path, default=REPORT_PATH)
@@ -381,6 +403,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     configure_logging("WARNING")
     dataset = load_dataset()
     engine = create_db_engine(str(Settings().database_url))
+    problem = single_generation_problem(engine)
+    if problem is not None:
+        engine.dispose()
+        print(f"Cannot run the mutation evaluation: {problem}")
+        return 2
     try:
         results = run_evaluation(engine, dataset, generators(), frontend=not args.no_frontend)
     except FrontendValidatorUnavailableError as error:

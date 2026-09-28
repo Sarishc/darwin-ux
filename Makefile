@@ -18,7 +18,9 @@ PG_LOG = $(shell brew --prefix)/var/log/$(PG_FORMULA).log
 	research-run research-resume research-eval decision-run decision-eval \
 	ui-spec-import ui-spec-show mutation-generate mutation-eval candidate-eval sandbox-eval \
 	experiment-create experiment-start experiment-pause experiment-stop experiment-complete \
-	experiment-analyze experiment-show experiment-eval
+	experiment-analyze experiment-show experiment-eval \
+	generation-bootstrap generation-show promotion-review promotion-approve promotion-reject \
+	generation-promote generation-rollback promotion-eval
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-17s %s\n", $$1, $$2}'
@@ -193,6 +195,36 @@ experiment-show: ## Show EXPERIMENT_ID= configuration and latest assessment
 
 experiment-eval: ## Golden experiment eval (eligibility, allocation, exposure, analysis, failure; rolled back)
 	$(BACKEND) uv run $(ENV_FILE) python -m darwin.experiments.evaluation
+
+# ---- Generations (Step 15): human approval, promotion, rollback — never automatic -------
+
+GENERATION_CLI = $(BACKEND) uv run $(ENV_FILE) python -m darwin.generations.cli
+PAGE ?= pricing_signup
+
+generation-bootstrap: ## Point PAGE= (default pricing_signup) at Generation 0 (idempotent)
+	$(GENERATION_CLI) bootstrap --page "$(PAGE)"
+
+generation-show: ## Active generation of PAGE=, its spec hash, promotion and history (read-only)
+	$(GENERATION_CLI) show --page "$(PAGE)"
+
+promotion-review: ## Eligibility + aggregate evidence for ANALYSIS_ID= (read-only; no winner)
+	$(GENERATION_CLI) review --analysis-id "$(ANALYSIS_ID)"
+
+promotion-approve: ## Human approval: ANALYSIS_ID= REVIEWER= REASON="..." (refused unless eligible)
+	$(GENERATION_CLI) approve --analysis-id "$(ANALYSIS_ID)" --reviewer "$(REVIEWER)" --reason "$(REASON)"
+
+promotion-reject: ## Human rejection: ANALYSIS_ID= REVIEWER= REASON="..."
+	$(GENERATION_CLI) reject --analysis-id "$(ANALYSIS_ID)" --reviewer "$(REVIEWER)" --reason "$(REASON)"
+
+generation-promote: ## Promote APPROVAL_ID= REVIEWER= CONFIRM=<page>:<generation> (atomic, re-validated)
+	$(GENERATION_CLI) promote --approval-id "$(APPROVAL_ID)" --reviewer "$(REVIEWER)" --confirm "$(CONFIRM)"
+
+generation-rollback: ## Roll PAGE= back: REVIEWER= REASON="..." CONFIRM=<page>:<generation> [TO_GENERATION=]
+	$(GENERATION_CLI) rollback --page "$(PAGE)" --reviewer "$(REVIEWER)" --reason "$(REASON)" \
+		--confirm "$(CONFIRM)" $(if $(TO_GENERATION),--to-generation $(TO_GENERATION))
+
+promotion-eval: ## Golden promotion/rollback eval (rolled back): unauthorized promotions must be 0
+	$(BACKEND) uv run $(ENV_FILE) python -m darwin.generations.evaluation
 
 test-integration: ## Integration tests against local darwin_test (needs PostgreSQL 17)
 	$(BACKEND) uv run $(ENV_FILE) pytest -m integration

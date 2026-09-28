@@ -1,6 +1,6 @@
 # DarwinUX — Development Environment
 
-> **Status (Step 14):** controlled experiments (Step 13 pass re-derived → human-created draft → explicit CLI start after a start gate → stable-hash assignment served by the backend → exposure only after a successful render, idempotent, via the telemetry pipeline → Wilson / Newcombe analysis → immutable `experiment_analysis`; no winner, no promotion; `/demo/experiment`); candidate sandbox evaluation (real Zod schema + registry + SpecPage in a jsdom harness; seven separate categories; deterministic `candidate_eval.v1` policy; immutable `candidate_evaluation_run`); candidate mutations (proceed decision → provenance re-check → MutationGenerator: fixture / LLM-port baseline / unimplemented Muse seam → strict MutationSpec → in-memory apply + protected diff → immutable `ui_spec_version` candidate, Zod-checked; `mutation_run`); a decision gate after research (Decider port: `rules.v1`, a test double, an LLM-port baseline, a Jev adapter not yet called live; fail-closed policy; `decision_run`); a bounded LangGraph research workflow (retrieval → sufficiency heuristic → ≤ 1 refinement → Step 9 hypothesis → critique → accept / human review via CLI resume / reject / stop; `research_run` / `research_step`); hypothesis generation (signal → Product Memory evidence → one structured call through an LLM port → strict validation → `hypothesis_run` / `hypothesis`; deterministic `FakeLLMProvider` only); Product Memory (retrieval only: allowlisted docs → chunks → embeddings in pgvector → filtered vector search → golden-set evaluation); a Next.js demo app (`/demo`, Generation 0) rendered from a validated UI Spec, with a browser telemetry SDK; the FastAPI *producer*; a separate worker (*consumer*) connected by a durable PostgreSQL-backed queue; deterministic behaviour signals; PostgreSQL 17 (telemetry, signals, queue, Product Memory, hypotheses, research runs, decisions, UI Spec versions, mutation runs, candidate evaluations, experiments, exposures, analyses); backend and frontend tests. No Docker, no AWS, no real LLM provider, no live Jev call, no Muse interface, no browser-based checks, no promotion, generations, automatic rollback or deployment yet.
+> **Status (Step 15):** human approval + generation promotion + rollback (promotion_policy.v1 gate → immutable approval with an evidence hash → explicit CLI promotion: one locked transaction, re-validated, new promoted UI Spec version + audit record + pointer move → explicit CLI rollback; `/demo` renders the active generation; server-verified telemetry UI attribution; no automatic promotion or rollback); controlled experiments (Step 13 pass re-derived → human-created draft → explicit CLI start after a start gate → stable-hash assignment served by the backend → exposure only after a successful render, idempotent, via the telemetry pipeline → Wilson / Newcombe analysis → immutable `experiment_analysis`; no winner, no promotion; `/demo/experiment`); candidate sandbox evaluation (real Zod schema + registry + SpecPage in a jsdom harness; seven separate categories; deterministic `candidate_eval.v1` policy; immutable `candidate_evaluation_run`); candidate mutations (proceed decision → provenance re-check → MutationGenerator: fixture / LLM-port baseline / unimplemented Muse seam → strict MutationSpec → in-memory apply + protected diff → immutable `ui_spec_version` candidate, Zod-checked; `mutation_run`); a decision gate after research (Decider port: `rules.v1`, a test double, an LLM-port baseline, a Jev adapter not yet called live; fail-closed policy; `decision_run`); a bounded LangGraph research workflow (retrieval → sufficiency heuristic → ≤ 1 refinement → Step 9 hypothesis → critique → accept / human review via CLI resume / reject / stop; `research_run` / `research_step`); hypothesis generation (signal → Product Memory evidence → one structured call through an LLM port → strict validation → `hypothesis_run` / `hypothesis`; deterministic `FakeLLMProvider` only); Product Memory (retrieval only: allowlisted docs → chunks → embeddings in pgvector → filtered vector search → golden-set evaluation); a Next.js demo app (`/demo`, Generation 0) rendered from a validated UI Spec, with a browser telemetry SDK; the FastAPI *producer*; a separate worker (*consumer*) connected by a durable PostgreSQL-backed queue; deterministic behaviour signals; PostgreSQL 17 (telemetry, signals, queue, Product Memory, hypotheses, research runs, decisions, UI Spec versions, mutation runs, candidate evaluations, experiments, exposures, analyses); backend and frontend tests. No Docker, no AWS, no real LLM provider, no live Jev call, no Muse interface, no browser-based checks, no automatic promotion or rollback, no authentication, no deployment yet.
 
 ## 1. Prerequisites
 
@@ -171,6 +171,12 @@ A small root `Makefile` wraps the real commands. It only delegates to uv — uv 
 | `make experiment-pause` / `experiment-stop REASON=…` / `experiment-complete` `EXPERIMENT_ID=…` | `… cli pause\|stop\|complete` | Lifecycle; completing ends data collection and promotes nothing |
 | `make experiment-analyze EXPERIMENT_ID=…` / `make experiment-show EXPERIMENT_ID=…` | `… cli analyze\|show` | A new immutable analysis record (evidence, no winner) / configuration + latest assessment |
 | `make experiment-eval` | `python -m darwin.experiments.evaluation` | Golden experiment eval (66 cases, rolled back), fail-open count; writes `artifacts/experiment-eval.json` (git-ignored) |
+| `make generation-bootstrap [PAGE=…]` / `make generation-show [PAGE=…]` | `python -m darwin.generations.cli bootstrap\|show` | Point the page at Generation 0 (idempotent) / active generation, spec hash, promotion, history |
+| `make promotion-review ANALYSIS_ID=…` | `… cli review` | Read-only: eligibility, blocking reasons, evidence hash, aggregate evidence (no winner) |
+| `make promotion-approve` / `promotion-reject ANALYSIS_ID=… REVIEWER=… REASON="…"` | `… cli approve\|reject` | Immutable human decision; approve is refused unless eligible |
+| `make generation-promote APPROVAL_ID=… REVIEWER=… CONFIRM=<page>:<generation>` | `… cli promote` | Atomic, re-validated promotion |
+| `make generation-rollback REVIEWER=… REASON="…" CONFIRM=<page>:<generation> [TO_GENERATION=…]` | `… cli rollback` | Pointer back to an earlier generation; nothing deleted |
+| `make promotion-eval` | `python -m darwin.generations.evaluation` | Golden promotion/rollback eval (36 cases, rolled back); writes `artifacts/promotion-eval.json` (git-ignored) |
 
 Without make, run the same commands from `backend/`, e.g.:
 
@@ -285,6 +291,12 @@ backend/src/darwin/
 ├── llm/
 │   ├── port.py        # LLMProvider protocol, request/result/usage, error types
 │   └── fake.py        # FakeLLMProvider: deterministic, one mode per failure
+├── generations/       # human approval, promotion, rollback (Step 15)
+│   ├── active.py      # the page's current generation (pointer, else highest baseline)
+│   ├── eligibility.py # promotion_policy.v1 gate + evidence hash (re-derived, no overrides)
+│   ├── service.py     # bootstrap / decide / promote / rollback (atomic, locked)
+│   ├── cli.py         # make generation-* / promotion-*
+│   └── evaluation.py  # golden promotion set (make promotion-eval)
 ├── experiments/       # controlled experiments (Step 14)
 │   ├── vocabulary.py  # variants, lifecycle, allowlisted allocations, metric definitions
 │   ├── assignment.py  # stable-hash bucketing (the only assignment code)
@@ -914,6 +926,24 @@ make experiment-eval
 ```
 
 Browser: with `make api`, `make worker` and `make web` running, `/demo/experiment` asks the backend for this tab's variant and renders it (`/demo` stays plain Generation 0). While no experiment is running — including while one is paused, stopped or completed — it shows Generation 0 and sends no exposure; nothing a session does then is attributed to either arm. Allocations are 100/500/1000/2500/5000 basis points (1–50%) only. No new dependencies.
+
+---
+
+## 23. Human Approval, Promotion and Rollback (Step 15)
+
+Every command is an explicit human action. `REVIEWER` is a self-asserted label (no authentication yet).
+
+```bash
+make generation-bootstrap                                   # pricing_signup -> Generation 0 (once)
+make promotion-review ANALYSIS_ID=<uuid>                    # read the aggregate evidence; see blocking reasons
+make promotion-approve ANALYSIS_ID=<uuid> REVIEWER=sarish REASON="..."
+make generation-promote APPROVAL_ID=<uuid> REVIEWER=sarish CONFIRM=pricing_signup:1
+make generation-show
+make generation-rollback REVIEWER=sarish REASON="..." CONFIRM=pricing_signup:0
+make promotion-eval
+```
+
+With `make api` running, `/demo` renders the active generation; if the backend is unreachable or answers anything unexpected it renders the bundled Generation 0. Read the evidence before approving: `evidence_ready` means enough data and no guardrail concern — not that the candidate improved anything.
 
 ---
 

@@ -19,7 +19,7 @@
 import type { FormFieldName } from "@/ui-spec/schema";
 
 import { getSessionId } from "./session";
-import { randomUuid } from "./uuid";
+import { randomUuid, UUID_PATTERN } from "./uuid";
 
 export const TELEMETRY_PATH = "/api/v1/telemetry/events";
 
@@ -63,12 +63,19 @@ export interface TelemetryEventBody {
   session_id: string;
   occurred_at: string;
   payload: Record<string, string | number>;
+  /** UI attribution (Step 15): what this page rendered. Claims; the backend verifies. */
+  ui_generation: number;
+  ui_spec_hash?: string;
+  ui_spec_version_id?: string;
 }
 
 export interface TelemetryOptions {
   /** e.g. http://127.0.0.1:8000 — null/empty disables telemetry. */
   baseUrl: string | null | undefined;
   generation: number;
+  /** The served spec's hash and version id — only when the backend served the spec. */
+  specHash?: string | null;
+  specVersionId?: string | null;
   fetchImpl?: typeof fetch;
   sessionId?: () => string;
   now?: () => Date;
@@ -83,7 +90,10 @@ export interface Telemetry {
 /** Build the request body, or null if the event is not safe/valid to send. */
 export function buildEventBody(
   event: TrackedEvent,
-  options: Pick<TelemetryOptions, "generation" | "sessionId" | "now">,
+  options: Pick<
+    TelemetryOptions,
+    "generation" | "sessionId" | "now" | "specHash" | "specVersionId"
+  >,
 ): TelemetryEventBody | null {
   const common = { generation: options.generation };
   let payload: Record<string, string | number>;
@@ -125,12 +135,21 @@ export function buildEventBody(
     default:
       return null;
   }
+  const attribution =
+    options.specHash &&
+    options.specVersionId &&
+    SPEC_HASH_PATTERN.test(options.specHash) &&
+    UUID_PATTERN.test(options.specVersionId)
+      ? { ui_spec_hash: options.specHash, ui_spec_version_id: options.specVersionId }
+      : {}; // bundled Generation 0: no server-issued identity, so nothing to claim
   return {
     event_id: randomUuid(), // fresh per interaction: the backend's idempotency key
     event_type: event.type,
     session_id: (options.sessionId ?? getSessionId)(),
     occurred_at: (options.now?.() ?? new Date()).toISOString(), // UTC with "Z"
     payload,
+    ui_generation: options.generation,
+    ...attribution,
   };
 }
 

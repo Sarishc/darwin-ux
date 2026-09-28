@@ -7,6 +7,10 @@
     candidate is not a generation until a future promotion step says so —
     and `candidate_for_generation` = parent generation + 1 records what it
     would become. It always has a parent.
+  * status "promoted" (Step 15, migration 0011): a generation created by an
+    approved, human-executed promotion. `generation` is set; `parent_id` is the
+    candidate it was promoted from (content identical except `generation`).
+    A candidate row is never changed into a generation.
   UPDATE is forbidden by a database trigger (migration 0008): versions are
   never edited, only added. Candidates are deduplicated by (parent, content
   hash): generating the same change twice reuses the same candidate row.
@@ -27,7 +31,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from darwin.db.base import Base
 
-SPEC_STATUSES = ("baseline", "candidate")
+SPEC_STATUSES = ("baseline", "candidate", "promoted")
+GENERATION_STATUSES = ("baseline", "promoted")  # rows that ARE generations
 MUTATION_STATUSES = (
     "succeeded",
     "invalid_output",
@@ -48,7 +53,11 @@ class UISpecVersion(Base):
     __table_args__ = (
         CheckConstraint(_in("status", SPEC_STATUSES), name="status_is_known"),
         CheckConstraint(
-            "(status = 'baseline') = (generation IS NOT NULL)", name="generation_only_for_baseline"
+            "(status IN ('baseline', 'promoted')) = (generation IS NOT NULL)",
+            name="generation_only_for_generations",
+        ),
+        CheckConstraint(
+            "status <> 'promoted' OR parent_id IS NOT NULL", name="promoted_has_parent"
         ),
         CheckConstraint(
             "(status = 'candidate') = "
@@ -65,13 +74,13 @@ class UISpecVersion(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     page_id: Mapped[str] = mapped_column(String(64))  # e.g. "pricing_signup"
     status: Mapped[str] = mapped_column(String(16))
-    generation: Mapped[int | None]  # baselines only
+    generation: Mapped[int | None]  # baselines and promoted generations only
     candidate_for_generation: Mapped[int | None]  # candidates only
     parent_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("ui_spec_version.id"))
     schema_version: Mapped[int]  # the UI Spec document's own "version" field
     spec: Mapped[dict[str, Any]] = mapped_column(JSONB)
     content_hash: Mapped[str] = mapped_column(String(64))  # sha256 of canonical JSON
-    source: Mapped[str] = mapped_column(String(160))  # "repo:<path>" | "mutation_run"
+    source: Mapped[str] = mapped_column(String(160))  # "repo:<path>" | "mutation_run" | "promotion"
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

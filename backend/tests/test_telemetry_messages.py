@@ -64,7 +64,7 @@ def test_round_trip_preserves_the_instant() -> None:
     assert parsed.occurred_at == datetime(2026, 9, 26, 17, 0, tzinfo=UTC)
 
 
-@pytest.mark.parametrize("version", [0, 2, "1", None, 1.5])
+@pytest.mark.parametrize("version", [0, 3, "1", "2", None, 1.5, 2.0])
 def test_unknown_schema_versions_are_rejected(version: object) -> None:
     with pytest.raises(ValidationError):
         parse_message(_body(schema_version=version))

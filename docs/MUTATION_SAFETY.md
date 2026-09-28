@@ -189,6 +189,8 @@ The sandbox is not deployed infrastructure. In v1 it is: the demo app running lo
 
 **From sandbox to users (Step 14).** A Step 13 `pass` is only an eligibility precondition. A candidate reaches sessions only through a human-created, human-started experiment whose start gate re-derives the pass, re-hashes both specs and checks allowlisted configuration; the backend re-hashes the stored spec again on every serve and falls back to Generation 0 on any mismatch. The browser still validates the served spec with the real Zod schema and renders it only through the registry; a candidate that fails validation or throws while rendering is replaced by Generation 0 (reported as `experiment_fallback`, never counted as an exposure). Candidate allocation never exceeds 50%. Nothing is written to `frontend/src/ui-spec/`, Generation 0 is never modified, and no result promotes a candidate.
 
+**From experiment to generation (Step 15).** A candidate row is never edited and never becomes active. Promotion creates a NEW immutable `promoted` UI Spec version whose content a database trigger proves equal to the candidate's except `generation`; the active-generation pointer can only name baselines and promoted generations, and only move with a matching promotion or rollback record. Promotion re-derives the whole chain — Step 13 pass, provenance, the completed experiment, the latest analysis, the current source generation — at the moment it runs, under a lock, and refuses if any of it changed since the human approved. Rollback is a pointer move to an earlier known-good generation; artifacts are never deleted.
+
 ## Risk Tiers and Approval
 
 | Tier | Examples | Approval required |

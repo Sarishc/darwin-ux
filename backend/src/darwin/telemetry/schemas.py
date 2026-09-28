@@ -83,6 +83,20 @@ class TelemetryEvent(BaseModel):
     occurred_at: AwareDatetime = Field(
         description="When the event happened on the client. Must include a timezone."
     )
+    # UI attribution (Step 15). Optional claims about what the page rendered. The
+    # worker verifies ui_spec_version_id against ui_spec_hash; unverified claims are
+    # stored but never trusted. Omitted = unknown (all pre-Step-15 clients).
+    ui_generation: int | None = Field(
+        default=None, ge=0, le=100_000, description="Generation number the page rendered."
+    )
+    ui_spec_hash: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+        description="sha256 of the rendered UI Spec (as served by the backend).",
+    )
+    ui_spec_version_id: UUID | None = Field(
+        default=None, description="The served UI Spec version id (as served by the backend)."
+    )
     payload: dict[str, JsonValue] = Field(
         default_factory=dict,
         description=(

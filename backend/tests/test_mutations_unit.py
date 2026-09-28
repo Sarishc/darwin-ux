@@ -327,6 +327,9 @@ class StubSession:
     def add(self, row: Any) -> None:
         self.added.append(row)
 
+    def get(self, *_: Any) -> Any:
+        return None  # no active-generation pointer: the highest baseline is current
+
     def scalar(self, *_: Any) -> Any:
         return type("Baseline", (), {"id": uuid.UUID(SOURCE_ID)})()
 

@@ -58,20 +58,25 @@ const experimentEvents = (events: TrackedEvent[]) =>
   events.filter((e) => e.type === "experiment_exposure" || e.type === "experiment_fallback");
 
 describe("variant resolution", () => {
-  it("asks the backend once, with the session id in the POST body (never the URL)", async () => {
+  it("asks for an assignment once, with the session id in the POST body (never the URL)", async () => {
     const fetchImpl = answer({ status: "none" });
     await renderWith(fetchImpl);
 
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    const calls = fetchImpl.mock.calls as unknown as [string, RequestInit][];
+    const assignments = calls.filter(([url]) => url.endsWith(ASSIGNMENT_PATH));
+    expect(assignments).toHaveLength(1);
+    const [url, init] = assignments[0];
     expect(url).toBe(`${BASE}${ASSIGNMENT_PATH}`);
     expect(url).not.toContain(SESSION);
     expect(init.method).toBe("POST");
     expect(init.credentials).toBe("omit");
-    expect(JSON.parse(String(init.body))).toEqual({
-      session_id: SESSION,
-      page: "pricing_signup",
-    });
+    expect(JSON.parse(String(init.body))).toEqual({ session_id: SESSION, page: "pricing_signup" });
+    // "none" -> the active generation is asked for (read-only GET, no session id).
+    const others = calls.filter(([url]) => !url.endsWith(ASSIGNMENT_PATH));
+    expect(others.map(([url]) => url)).toEqual([
+      `${BASE}/api/v1/generations/active?page=pricing_signup`,
+    ]);
+    expect(others[0][1].method).toBeUndefined();
   });
 
   it("no running experiment: Generation 0, no exposure", async () => {

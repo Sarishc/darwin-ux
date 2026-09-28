@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import CheckConstraint, DateTime, Index, String, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -32,6 +32,13 @@ class BehaviorSignal(Base):
         # Reconciliation reads and updates one session's signals after every
         # accepted event; without this it would scan the whole table.
         Index("ix_behavior_signal_session_id", "session_id"),
+        CheckConstraint(
+            "ui_attribution IN ('single', 'mixed', 'unknown')", name="ui_attribution_is_known"
+        ),
+        CheckConstraint(
+            "(ui_attribution = 'single') = (ui_spec_version_id IS NOT NULL)",
+            name="ui_spec_version_only_when_single",
+        ),
     )
 
     # Server-owned row identity (same convention as user_event).
@@ -62,6 +69,13 @@ class BehaviorSignal(Base):
     detected_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+    # UI attribution (Step 15): derived ONLY from the evidence events' verified
+    # ui_spec_version_id. "single" = every evidence event verified on the same spec
+    # version; "mixed" = verified on different versions; "unknown" = at least one
+    # evidence event has no verified attribution (all pre-Step-15 events).
+    ui_attribution: Mapped[str] = mapped_column(String(16), server_default="unknown")
+    ui_spec_version_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("ui_spec_version.id"))
 
     # NULL = canonical. Set when later (late-arriving) events mean the
     # detectors no longer produce this signal for the session's history.

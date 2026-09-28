@@ -188,7 +188,14 @@ def test_end_to_end_candidate_better_is_evidence_not_a_promotion(
     served_b = _assignment(client, session_b, "pricing_signup")
     assert _assignment(client, session_b, "pricing_signup") == served_b
     assert (served_a["variant"], served_b["variant"]) == ("control", "candidate")
-    assert set(served_b) == {"status", "experiment_key", "variant", "spec_hash", "spec"}
+    assert set(served_b) == {
+        "status",
+        "experiment_key",
+        "variant",
+        "spec_hash",
+        "spec_version_id",  # Step 15: for server-verified telemetry attribution
+        "spec",
+    }
     assert served_a["spec_hash"] == experiment.control_spec_hash == content_hash(served_a["spec"])
     assert served_b["spec_hash"] == experiment.candidate_spec_hash == content_hash(served_b["spec"])
 

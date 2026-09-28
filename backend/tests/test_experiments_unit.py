@@ -367,11 +367,12 @@ class _StubSession:
     def __init__(self, experiment: Any, spec_row: Any) -> None:
         self.experiment, self.spec_row = experiment, spec_row
 
-    def scalar(self, _statement: Any) -> Any:
-        return self.experiment
+    def scalar(self, statement: Any) -> Any:
+        # Only the experiment lookup has a row; no baseline row either (no pointer).
+        return self.experiment if "FROM experiment" in str(statement) else None
 
-    def get(self, _model: Any, _id: Any) -> Any:
-        return self.spec_row
+    def get(self, model: Any, _id: Any) -> Any:
+        return None if model.__name__ == "ActiveGeneration" else self.spec_row
 
 
 def _experiment(**kw: Any) -> _Row:

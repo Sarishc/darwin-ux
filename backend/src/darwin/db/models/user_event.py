@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import CheckConstraint, DateTime, Index, String, func, text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, validates
 
@@ -25,6 +25,13 @@ class UserEvent(Base):
         # occurred_at, after every accepted event. Without this index that is a
         # full-table scan.
         Index("ix_user_event_session_id_occurred_at", "session_id", "occurred_at"),
+        CheckConstraint(
+            "ui_generation IS NULL OR ui_generation BETWEEN 0 AND 100000",
+            name="ui_generation_in_range",
+        ),
+        CheckConstraint(
+            "ui_spec_hash IS NULL OR ui_spec_hash ~ '^[0-9a-f]{64}$'", name="ui_spec_hash_is_sha256"
+        ),
     )
 
     # Server-owned identity; other tables will reference this, never client input.
@@ -47,6 +54,15 @@ class UserEvent(Base):
     received_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+    # UI attribution (Step 15, migration 0011). What the client SAYS it rendered —
+    # a generation number and a spec hash — plus the server-verified spec version:
+    # set only when the claimed ui_spec_version_id exists and its content hash equals
+    # the claimed hash. NULL = unknown (every event before Step 15 stays unknown; it is
+    # never backfilled). Claims are never used for authorization.
+    ui_generation: Mapped[int | None]
+    ui_spec_hash: Mapped[str | None] = mapped_column(String(64))
+    ui_spec_version_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("ui_spec_version.id"))
 
     # Event-specific, non-personal details (e.g. click coordinates).
     payload: Mapped[dict[str, Any]] = mapped_column(

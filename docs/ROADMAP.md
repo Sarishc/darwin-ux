@@ -123,7 +123,9 @@ Built: explicit mutation surface, strict MutationSpec (replace-only, semantic ta
 **Learn:** Next.js + TypeScript application structure, typed API clients.
 **Exit:** a human can approve or reject from the UI and the graph resumes.
 
-### Step 8 — Experiments and Generation 1 — controlled experiments ✅ (built as "Step 14"); Generation 1 / promotion not yet
+### Step 8 — Experiments and Generation 1 — controlled experiments ✅ (built as "Step 14"); human promotion + rollback ✅ (built as "Step 15")
+
+Step 15 built: the `active_generation` pointer (database-guarded feature flag), immutable approvals bound to an evidence hash (`promotion_policy.v1`, no overrides), atomic promotion with TOCTOU re-validation and row locking (one Generation 1 under concurrency), immutable promoted generations, explicit rollback as a pointer reversal, `/demo` rendering the active generation with a bundled Generation 0 fallback, server-verified telemetry UI attribution and signal attribution (single / mixed / unknown), migration 0011, and a 36-case golden set (unauthorized promotions 0, invalid rollbacks 0). Not yet: automatic rollback, the experiment report / generation summary in Product Memory, the Evolution Lab UI, authentication.
 
 Step 14 built: deterministic eligibility (re-derived Step 13 pass) and start gate, human-only CLI lifecycle, stable-hash assignment served by the backend with allowlisted basis-point allocations, exposure-after-render through the telemetry pipeline (idempotent), four session-level metrics on existing telemetry, Wilson / Newcombe analysis with an `insufficient_data` floor and guardrail flags, immutable lifecycle history with active collection windows (pause/resume never mixes arms), immutable analysis records (migration 0010), `/demo/experiment`, and a 66-case golden set (fail-open 0). Not yet: sample-ratio-mismatch check, automatic rollback (flag only), human promotion → Generation 1, experiment report → Product Memory, a flag table / Experiment Manager worker (assignment is stateless instead).
 

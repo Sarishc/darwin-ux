@@ -172,6 +172,17 @@ A record of a retrieval operation against Product Memory.
 
 ---
 
+### Generations, approvals, promotions, rollbacks — implemented (Step 15)
+
+As built in migration 0011 (the Generation / Approval / Rollback design further below; this is the first concrete form):
+
+- **ui_spec_version** gains status `promoted`: a generation created by a promotion — `generation` set, `parent_id` = the candidate, content equal to the candidate's except `generation` (trigger), and a promotion record required at commit (deferred trigger). Baselines and promoted rows are *generations*; candidates never are.
+- **active_generation** — `page_id` (PK), `ui_spec_version_id`, `generation`, `change_kind` (`bootstrap | promotion | rollback`), `change_id` (the record that made the last move; NULL only for bootstrap), `updated_at`. Trigger: INSERT only as a bootstrap to the page's Generation 0; no DELETE; an UPDATE must name a new promotion/rollback record describing exactly the move; the target must be a baseline/promoted generation of the page.
+- **promotion_approval** — candidate, evaluation, experiment, analysis, source spec + generation, target generation (computed), `decision` (`approve | reject`), `reviewer` (self-asserted, `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`), `reason` (1–500 chars), `policy_version`, `evidence_hash`, `blocking_reasons` (must be empty for approve). Partial UNIQUE: one approve per evidence hash. Immutable (no UPDATE/DELETE).
+- **generation_promotion** — `approval_id` (UNIQUE), candidate, promoted spec (UNIQUE), from spec/generation, to generation (> from), executor, policy version, evidence hash. Deferred check: the pointer names it at commit. Immutable.
+- **generation_rollback** — from/to spec and generation (to < from, different specs), reviewer, reason. Deferred check: the pointer names it at commit. Immutable.
+- **user_event** gains `ui_generation`, `ui_spec_hash` (claims) and `ui_spec_version_id` (server-verified; NULL = unknown). **behavior_signal** gains `ui_attribution` (`single | mixed | unknown`) and `ui_spec_version_id` (set iff single).
+
 ### Experiments — implemented (Step 14)
 
 As built in migration 0010 (the Experiment design further below; this is the first concrete form — two variants only, no Generation or promotion yet):

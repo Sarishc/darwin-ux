@@ -324,10 +324,16 @@ def test_injected_text_cannot_widen_the_decision(
 
 def test_no_mutation_tables_exist(migrated_engine: Engine) -> None:
     tables = set(inspect(migrated_engine).get_table_names())
-    # Step 14 adds controlled experiments (config, exposures, analyses) — and nothing that
-    # deploys, promotes or creates generations.
+    # Step 14 adds controlled experiments; Step 15 adds human-gated promotion (approval,
+    # promotion and rollback records, the active pointer) — and nothing that deploys.
     assert {t for t in tables if "experiment" in t} <= EXPERIMENT_TABLES
-    assert not {t for t in tables if any(w in t for w in ("deploy", "promot", "generation"))}
+    assert not {t for t in tables if "deploy" in t}
+    assert {t for t in tables if any(w in t for w in ("promot", "generation", "rollback"))} <= {
+        "active_generation",
+        "promotion_approval",
+        "generation_promotion",
+        "generation_rollback",
+    }
     # Step 12 adds candidate-only mutation data; nothing else mutation-related may exist.
     assert {t for t in tables if "mutation" in t} <= {"mutation_run"}
 

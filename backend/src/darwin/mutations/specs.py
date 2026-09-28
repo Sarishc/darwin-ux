@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from darwin.config import Settings
 from darwin.db.engine import create_db_engine
 from darwin.db.models import UISpecVersion
+from darwin.generations.active import active_spec
 from darwin.hypotheses.evidence import GENERATION_ZERO_SPEC
 from darwin.memory.corpus import REPO_ROOT, read_allowlisted
 
@@ -102,13 +103,12 @@ def import_generation_zero(session: Session) -> ImportOutcome:
 
 
 def current_baseline(session: Session, page_id: str) -> UISpecVersion | None:
-    """The highest-generation baseline of a page: the only valid mutation source."""
-    return session.scalar(
-        select(UISpecVersion)
-        .where(UISpecVersion.page_id == page_id, UISpecVersion.status == "baseline")
-        .order_by(UISpecVersion.generation.desc())
-        .limit(1)
-    )
+    """The page's current generation: the only valid mutation source.
+
+    Step 15: the active-generation pointer when it exists (Generation 0, a promoted
+    generation, or one rolled back to); before bootstrap, the highest baseline.
+    """
+    return active_spec(session, page_id)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

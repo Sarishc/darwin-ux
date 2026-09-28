@@ -2,9 +2,10 @@
 
 from fastapi import APIRouter
 
-from darwin.api import experiments, health, telemetry
+from darwin.api import experiments, generations, health, telemetry
 
 api_v1_router = APIRouter(prefix="/api/v1")
 api_v1_router.include_router(health.router)
 api_v1_router.include_router(telemetry.router)
 api_v1_router.include_router(experiments.router)
+api_v1_router.include_router(generations.router)

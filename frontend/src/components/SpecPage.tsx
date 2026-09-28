@@ -11,7 +11,18 @@ import { createTelemetry, type Telemetry, type TrackedEvent } from "@/lib/teleme
 import { DARWIN_API_BASE_URL } from "@/lib/telemetry/config";
 import type { UiSpec } from "@/ui-spec/schema";
 
-export function SpecPage({ spec, telemetry }: { spec: UiSpec; telemetry?: Telemetry }) {
+export function SpecPage({
+  spec,
+  telemetry,
+  specHash,
+  specVersionId,
+}: {
+  spec: UiSpec;
+  telemetry?: Telemetry;
+  /** Server-issued identity of the rendered spec, for telemetry attribution (Step 15). */
+  specHash?: string | null;
+  specVersionId?: string | null;
+}) {
   const [signupRevealed, setSignupRevealed] = useState(false);
   const signupRef = useRef<HTMLElement | null>(null);
 
@@ -21,12 +32,14 @@ export function SpecPage({ spec, telemetry }: { spec: UiSpec; telemetry?: Teleme
       createTelemetry({
         baseUrl: DARWIN_API_BASE_URL,
         generation: spec.generation,
+        specHash,
+        specVersionId,
         onDropped:
           process.env.NODE_ENV === "development"
             ? (reason) => console.warn(`[telemetry] event not delivered: ${reason}`)
             : undefined,
       }),
-    [telemetry, spec.generation],
+    [telemetry, spec.generation, specHash, specVersionId],
   );
 
   const track = useCallback(

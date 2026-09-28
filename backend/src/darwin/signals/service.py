@@ -34,6 +34,7 @@ a later queue/session-finalization worker will improve scaling.
 
 import logging
 import uuid
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from sqlalchemy import func, select, text, update
@@ -77,8 +78,34 @@ def session_history(session: Session, session_id: uuid.UUID) -> list[UserEvent]:
     return list(session.scalars(statement))
 
 
-def _insert_or_revive(session: Session, candidate: SignalCandidate) -> str:
+def ui_attribution(
+    evidence_event_ids: Sequence[str], spec_by_event: Mapping[str, uuid.UUID | None]
+) -> tuple[str, uuid.UUID | None]:
+    """Which UI Spec version produced a signal — only as far as its evidence proves.
+
+    single  every evidence event carries the SAME verified ui_spec_version_id
+    mixed   every evidence event is verified, but on different spec versions
+    unknown any evidence event is unverified or missing (all pre-Step-15 events)
+
+    Never inferred beyond the evidence; downstream steps fail closed on mixed/unknown
+    where the exact generation matters.
+    """
+    specs = [spec_by_event.get(event_id) for event_id in evidence_event_ids]
+    if not specs or any(spec is None for spec in specs):
+        return "unknown", None
+    distinct = set(specs)
+    if len(distinct) == 1:
+        return "single", specs[0]
+    return "mixed", None
+
+
+def _insert_or_revive(
+    session: Session,
+    candidate: SignalCandidate,
+    spec_by_event: Mapping[str, uuid.UUID | None],
+) -> str:
     """Store a canonical candidate. Returns 'created', 'revived', or 'unchanged'."""
+    attribution, spec_id = ui_attribution(candidate.evidence.get("event_ids", []), spec_by_event)
     statement = (
         insert(BehaviorSignal)
         .values(
@@ -89,6 +116,8 @@ def _insert_or_revive(session: Session, candidate: SignalCandidate) -> str:
             window_start=candidate.window_start,
             window_end=candidate.window_end,
             evidence=candidate.evidence,
+            ui_attribution=attribution,
+            ui_spec_version_id=spec_id,
         )
         .on_conflict_do_nothing(index_elements=[BehaviorSignal.signal_id])
         .returning(BehaviorSignal.id)
@@ -131,12 +160,14 @@ def reconcile_session_signals(session: Session, session_id: uuid.UUID) -> Reconc
     with session.begin():
         _lock_session(session, session_id)
 
-        candidates = detect_all(session_history(session, session_id))
+        history = session_history(session, session_id)
+        candidates = detect_all(history)
+        spec_by_event = {str(e.event_id): e.ui_spec_version_id for e in history}
         canonical_ids = [c.signal_id for c in candidates]
 
         outcomes = {"created": 0, "revived": 0, "unchanged": 0}
         for candidate in candidates:
-            outcome = _insert_or_revive(session, candidate)
+            outcome = _insert_or_revive(session, candidate, spec_by_event)
             outcomes[outcome] += 1
             if outcome != "unchanged":
                 _log(

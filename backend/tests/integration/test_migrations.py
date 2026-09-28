@@ -27,7 +27,7 @@ def test_database_is_at_the_latest_migration(migrated_engine: Engine, alembic_cf
     with migrated_engine.connect() as connection:
         current = MigrationContext.configure(connection).get_current_revision()
 
-    assert current == head == "0010"
+    assert current == head == "0011"
 
 
 def test_user_event_table_has_the_expected_shape(migrated_engine: Engine) -> None:
@@ -42,8 +42,13 @@ def test_user_event_table_has_the_expected_shape(migrated_engine: Engine) -> Non
         "occurred_at",
         "received_at",
         "payload",
+        # Step 15 UI attribution: nullable by design (NULL = unknown, never backfilled).
+        "ui_generation",
+        "ui_spec_hash",
+        "ui_spec_version_id",
     }
-    assert all(column["nullable"] is False for column in columns.values())
+    attribution = {"ui_generation", "ui_spec_hash", "ui_spec_version_id"}
+    assert all(column["nullable"] is (name in attribution) for name, column in columns.items())
     assert inspector.get_pk_constraint("user_event")["constrained_columns"] == ["id"]
     assert [c["column_names"] for c in inspector.get_unique_constraints("user_event")] == [
         ["event_id"]
@@ -51,6 +56,8 @@ def test_user_event_table_has_the_expected_shape(migrated_engine: Engine) -> Non
     assert {c["name"] for c in inspector.get_check_constraints("user_event")} == {
         "ck_user_event_event_type_not_empty",
         "ck_user_event_payload_is_object",
+        "ck_user_event_ui_generation_in_range",
+        "ck_user_event_ui_spec_hash_is_sha256",
     }
 
 

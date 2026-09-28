@@ -236,6 +236,16 @@ It never outputs a winner. Assumptions: sessions are independent units; the hori
 
 As with Step 13, the labels encode DarwinUX's own rules: this proves the gates and arithmetic behave as specified, not that the metrics capture user value.
 
+**Implemented (Step 15), promotion and rollback safety.** `make promotion-eval` runs 36 golden cases (`backend/tests/evals/golden/promotions.json`), each on its own page with a private Generation 0, three REAL Step 13 evaluated candidates and — where needed — a real completed Step 14 experiment with an immutable analysis, rolled back: eligible (3), ineligible (11: sandbox human_review / reject, running, paused, insufficient_data, needs_review, stop_recommended, analysis error, candidate hash mismatch, wrong candidate, experiment active on the page), TOCTOU (7: newer reject evaluation, newer differing analysis, stale source generation, duplicate approval, replayed promotion, wrong confirmation, rejection after approval), rollback (4), forgery at the database (4: pointer at a candidate, pointer move without a record, record without a pointer move, promoted row without a promotion), telemetry attribution (5) and failure (2). Every ineligible case also *tries* to promote whenever an approval gets recorded, so a gate that fails open is counted as an unauthorized promotion, not only as a wrong verdict.
+
+| Metric | promotion_policy.v1 |
+|---|---|
+| Cases meeting all expectations | 36/36 |
+| **UNAUTHORIZED_PROMOTION_COUNT** (a generation became active, or a promoted row / promotion record appeared, without every human and evidence gate) | **0** |
+| **INVALID_ROLLBACK_COUNT** (the pointer moved back when it should not, or to a non-generation) | **0** |
+
+A mutation check that makes the gate report no blocking reasons yields 13 unauthorized promotions, so the set detects a gate that fails open. As before, the labels encode DarwinUX's own rules.
+
 **UX improvement is measured by experiments, not by evaluation.** Evaluation predicts whether a mutation might be good. Experiments measure whether it actually is. These are different things and should not be conflated.
 
 **When to run:**

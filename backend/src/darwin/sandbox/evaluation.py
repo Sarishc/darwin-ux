@@ -46,7 +46,7 @@ from darwin.llm.fake import FakeLLMProvider, MutationMode
 from darwin.logging_config import configure_logging
 from darwin.memory.corpus import REPO_ROOT
 from darwin.mutations.apply import content_hash, diff_paths
-from darwin.mutations.evaluation import mutable_paths
+from darwin.mutations.evaluation import mutable_paths, single_generation_problem
 from darwin.mutations.fixture import FixtureMode, FixtureMutationGenerator
 from darwin.mutations.llm import LLMMutationGenerator
 from darwin.mutations.service import generate_candidate
@@ -489,6 +489,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     configure_logging("WARNING")
     dataset = load_dataset()
     engine = create_db_engine(str(Settings().database_url))
+    problem = single_generation_problem(engine)
+    if problem is not None:
+        engine.dispose()
+        print(f"Cannot run the sandbox evaluation: {problem}")
+        return 2
     try:
         results = run_evaluation(engine, dataset)
     except HarnessError as error:

@@ -103,15 +103,15 @@
       }
     },
     {
-      "id": "elig_control_not_generation_zero",
+      "id": "elig_control_not_active_generation",
       "kind": "eligibility",
-      "description": "A draft whose control hash is not Generation 0 cannot start.",
+      "description": "A draft whose control hash is not the active generation cannot start.",
       "corrupt": "draft_control_not_gen0",
       "expected": {
         "created": true,
         "started": false,
         "reasons_include": [
-          "control_not_generation_zero"
+          "control_not_active_generation"
         ]
       }
     },

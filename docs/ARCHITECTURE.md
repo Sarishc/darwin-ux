@@ -185,7 +185,7 @@ A fourth, automatic decision exists: **rollback on guardrail breach** (error rat
 
 ## AI / Agent Decision Flow
 
-> **Built so far (Step 14):** … → sandbox evaluation → **controlled experiment**: a Step 13 `pass` (re-checked from the database) can become a human-created draft experiment against Generation 0, started only by an explicit CLI command after a deterministic start gate; stable-hash assignment served by the backend, exposure only after a successful render, idempotent exposures through the telemetry pipeline, and immutable frequentist analyses that are evidence for a human (see "Experiment Architecture (Step 14)" below). Promotion, generations, automatic rollback and deployment are still design. Step 13: **sandbox evaluation**: every candidate can be evaluated by rendering it through the real Zod schema, registry and `SpecPage` in a jsdom harness (telemetry captured, never sent) and scored in seven separate categories by a deterministic `candidate_eval.v1` policy — pass | human_review | reject, stored as an immutable `candidate_evaluation_run`; a safe-but-harmful candidate is rejected. Step 12: a proceed decision (re-checked for stale provenance) produces a MutationRequest; a MutationGenerator (fixture, LLM-port baseline; Muse is an unimplemented seam) proposes a data-only MutationSpec; DarwinUX validates it against an explicit mutation surface, applies it in memory, proves only allowed leaves changed, and stores an immutable candidate UI Spec (`ui_spec_version`, `mutation_run`) that the frontend's real Zod schema accepts. Promotion to a new Generation, automatic rollback, the Evolution Lab UI, browser-based checks and deployment below are still design.
+> **Built so far (Step 15):** … → controlled experiment → **human approval → atomic promotion → explicit rollback**: an immutable approval bound to an evidence hash, a promotion transaction that re-derives every gate under a row lock and moves a database-guarded `active_generation` pointer, and rollback as a pointer reversal (see "Promotion and Rollback Architecture (Step 15)" below). Automatic rollback, the Evolution Lab UI, Product Memory ingestion of generation summaries and deployment are still design. Step 14: **controlled experiment**: a Step 13 `pass` (re-checked from the database) can become a human-created draft experiment against the page's active generation (Generation 0 until a promotion), started only by an explicit CLI command after a deterministic start gate; stable-hash assignment served by the backend, exposure only after a successful render, idempotent exposures through the telemetry pipeline, and immutable frequentist analyses that are evidence for a human (see "Experiment Architecture (Step 14)" below). Step 13: **sandbox evaluation**: every candidate can be evaluated by rendering it through the real Zod schema, registry and `SpecPage` in a jsdom harness (telemetry captured, never sent) and scored in seven separate categories by a deterministic `candidate_eval.v1` policy — pass | human_review | reject, stored as an immutable `candidate_evaluation_run`; a safe-but-harmful candidate is rejected. Step 12: a proceed decision (re-checked for stale provenance) produces a MutationRequest; a MutationGenerator (fixture, LLM-port baseline; Muse is an unimplemented seam) proposes a data-only MutationSpec; DarwinUX validates it against an explicit mutation surface, applies it in memory, proves only allowed leaves changed, and stores an immutable candidate UI Spec (`ui_spec_version`, `mutation_run`) that the frontend's real Zod schema accepts. Automatic rollback, the Evolution Lab UI, browser-based checks and deployment below are still design.
 
 ```mermaid
 graph TD
@@ -256,7 +256,7 @@ CandidateEvaluationRun (pass, re-derived from the DB)
 
 | Concern | Built (Step 14) |
 |---|---|
-| Eligibility | the CandidateEvaluationRun exists, completed, `pass`, `candidate_eval.v1`, reasons exactly `all_gates_passed`, every category `pass`; no newer non-pass evaluation of the candidate; Step 13's provenance re-check still holds (hashes re-computed, succeeded MutationRun, decision still proceed); the parent is Generation 0; both specs contain the metric components. A request that merely claims this is not trusted. |
+| Eligibility | the CandidateEvaluationRun exists, completed, `pass`, `candidate_eval.v1`, reasons exactly `all_gates_passed`, every category `pass`; no newer non-pass evaluation of the candidate; Step 13's provenance re-check still holds (hashes re-computed, succeeded MutationRun, decision still proceed); the parent is the page's active generation (Generation 0 until a promotion — Step 15); both specs contain the metric components. A request that merely claims this is not trusted. |
 | Start gate | the above again, plus: draft (or paused), stored hashes equal the evaluated specs, configuration inside the allowlists, no other active experiment on the page. Every failed check is returned as a reason code; nothing starts. |
 | Human boundary | create / start / pause / stop / complete / analyze exist only as CLI commands; `start` requires retyping the experiment key. The only HTTP route is the read-only assignment endpoint. No model allocates traffic or reads results. |
 | Assignment | `bucket = int(sha256(f"{key}:{session_id}")[:8], big-endian) % 10 000`; candidate iff `bucket < candidate_allocation_bp`. Deterministic, cross-process stable (never Python `hash()`), salted per experiment, monotonic in allocation. |
@@ -275,6 +275,43 @@ CandidateEvaluationRun (pass, re-derived from the DB)
 **Deliberate deviation from the earlier design.** The design above (and DATA_PIPELINES.md) planned automatic rollback on a guardrail breach. Step 14 only *flags* `stop_recommended`; a human stops with one command (`make experiment-stop`). Automatic rollback waits until repeated-look false alarms are handled (OPEN_QUESTIONS.md N19).
 
 **Limitations.** Window boundaries are server time; exposure and outcome times are the client's clock (one browser, so consistent with each other). A client clock skewed by more than the distance to a boundary can misplace an event across it; the extra requirement that an event arrive no earlier than its window opened (server clock) blocks the "arrived before the window existed" case, not every skew. Sessions still showing a page loaded before a pause behave in the candidate UI during the pause; that evidence is discarded, not attributed. Traffic is simulated (labelled `traffic_source=simulated` everywhere). The sample floor is an operational minimum, not a power calculation. Repeated analyses of a running experiment inflate false positives. There is no completion event, so "task success" is not measurable yet. The candidate's footer reads "Generation 1" while control reads "Generation 0" — a small visible difference between arms.
+
+---
+
+## Promotion and Rollback Architecture (Step 15)
+
+Experiment evidence is not deployment authority. A candidate becomes a generation only through two explicit human commands, and every step leaves an immutable record.
+
+```
+ExperimentAnalysis (immutable evidence, never "winner")
+  -> make promotion-review        promotion_policy.v1 gate (read-only) + aggregate evidence
+  -> make promotion-approve       PromotionApproval: decision, self-asserted reviewer, reason,
+                                  evidence_hash (refused unless the gate has no blocking reason)
+  -> make generation-promote      ONE transaction: lock active_generation row -> re-derive the gate
+     CONFIRM=<page>:<generation>  -> same evidence hash? -> new `promoted` UISpecVersion ->
+                                  GenerationPromotion -> pointer update -> commit
+  -> ActiveGeneration             /demo renders it (GET /api/v1/generations/active)
+  -> make generation-rollback     GenerationRollback -> pointer back; nothing deleted
+```
+
+| Concept | Representation |
+|---|---|
+| candidate | `ui_spec_version` status `candidate` (Step 12). Never changed, never active. |
+| generation | status `baseline` (Generation 0, imported) or `promoted` (new row created by a promotion; content = candidate content except `generation`, parent = the candidate — a trigger checks both). `UNIQUE(page, generation)`. |
+| active generation | `active_generation`: one row per page — a database-backed feature flag. Bootstrapped to Generation 0; moves only when `change_id` names a new promotion/rollback record describing exactly that move (trigger); never at a candidate; never deleted. |
+| approval | `promotion_approval`: approve \| reject, reviewer (self-asserted), reason (≤ 500 chars, audit text only), `promotion_policy.v1`, evidence hash, the gate's blocking reasons. One approve per evidence hash. Immutable. |
+| promotion | `generation_promotion`: approval (UNIQUE — no replay), candidate, promoted spec, from/to generation, executor, evidence hash. Deferred checks refuse a commit where it and the pointer disagree. Immutable. |
+| rollback | `generation_rollback`: from/to spec and generation (to < from), reviewer, reason. Default target: the generation the current one was promoted from; an explicit `TO_GENERATION` must be an earlier baseline/promoted generation of the page. Immutable. |
+
+**The gate (no overrides).** From one analysis, re-derived from the database: analysis `experiment_analysis.v1`, completed, report hash intact, report matches the experiment, `evidence_ready` with reasons exactly `[evidence_ready]`, sufficient data, guardrails ok, zero integrity flags, cut off at/after completion, no newer analysis with a different report; experiment `completed`, both stored hashes equal the spec rows, no conflicting experiment for the candidate, no experiment active on the page; Step 13/14 eligibility re-derived (pass, not superseded, provenance chain intact, candidate matches); the candidate's parent is the page's active generation. The target generation is `max(generation on the page) + 1`, computed, never supplied.
+
+**TOCTOU.** Promotion re-runs the gate under the row lock and compares the evidence hash with the approval's. A newer non-pass evaluation, a newer differing analysis, a moved pointer, a later rejection of the same evidence, a replayed approval or a wrong confirmation all refuse promotion.
+
+**Concurrency.** The `FOR UPDATE` lock on the page's pointer serialises promoters; `UNIQUE(page, generation)`, `UNIQUE(approval_id)` and the pointer trigger are the backstop. Four simultaneous attempts produce exactly one Generation 1 (tested).
+
+**Current generation everywhere.** One function (`generations/active.py`) answers "the page's current generation": the mutation source (Step 12), the Step 13 parent check, the Step 14 experiment control and start gate, variant serving (an experiment whose control is no longer active is stale and served as `none`), and `/demo`.
+
+**No automation.** No model, decider, evaluator or analysis can approve, promote or roll back; there is no HTTP route for any of it. Automatic rollback remains design (OPEN_QUESTIONS.md N19).
 
 ---
 
@@ -413,6 +450,7 @@ darwin-ux/
 │   │       ├── mutations/         # candidate mutations: surface, MutationSpec, apply, generators, UI Spec versions (Step 12)
 │   │       ├── sandbox/           # candidate evaluation: provenance, harness runner, candidate_eval.v1 policy (Step 13)
 │   │       ├── experiments/       # controlled experiments: assignment, eligibility, exposure, stats, analysis (Step 14)
+│   │       ├── generations/       # human approval, promotion gate, atomic promotion, rollback (Step 15)
 │   │       ├── evaluation/        # Evaluation engine, metrics, judges
 │   │       ├── pipelines/         # Telemetry & ingestion processing logic
 │   │       ├── mutation/          # UI Spec, component registry, MutationSpec validation

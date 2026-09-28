@@ -10,8 +10,8 @@ merely claims "this candidate passed" is never trusted:
   no NEWER evaluation of the same candidate says anything other than pass;
   Step 13's provenance re-check still holds today (hashes re-computed,
   succeeded MutationRun, decision still proceed, chain intact);
-  the parent is Generation 0 (the control) and both specs still contain the
-  components the metrics read.
+  the parent is the page's ACTIVE generation (the control: Generation 0 until a
+  promotion, Step 15) and both specs still contain the components the metrics read.
 
 The start gate repeats all of that and adds: the experiment is draft (or
 paused), its stored hashes still equal the evaluated specs, its configuration
@@ -34,6 +34,7 @@ from darwin.db.models import (
     MutationRun,
     UISpecVersion,
 )
+from darwin.generations.active import active_spec
 from darwin.mutations.apply import content_hash
 from darwin.mutations.surface import iter_targets
 from darwin.sandbox.policy import CATEGORY_ORDER, EVALUATOR_VERSION
@@ -158,8 +159,9 @@ def check_eligibility(session: Session, evaluation_run_id: uuid.UUID) -> Eligibl
     parent = session.get(UISpecVersion, context.parent_id)
     candidate = session.get(UISpecVersion, context.candidate_id)
     assert parent is not None and candidate is not None  # load_context proved both exist
-    if parent.status != "baseline" or parent.generation != 0:
-        raise ExperimentRefused(["control_not_generation_zero"])
+    current = active_spec(session, parent.page_id)
+    if current is None or current.id != parent.id:
+        raise ExperimentRefused(["control_not_active_generation"])
     if not (_has_signup_form(parent.spec) and _has_signup_form(candidate.spec)):
         raise ExperimentRefused(["metric_component_missing"])
     mutation = session.get(MutationRun, context.mutation_run_id)
@@ -207,7 +209,7 @@ def start_gate(session: Session, experiment: Experiment) -> list[str]:
         eligible.control_spec_id != experiment.control_spec_id
         or eligible.control_spec_hash != experiment.control_spec_hash
     ):
-        problems.append("control_not_generation_zero")
+        problems.append("control_not_active_generation")
     if eligible.mutation_run_id != experiment.mutation_run_id:
         problems.append("mutation_run_changed")
     other_active = session.scalar(

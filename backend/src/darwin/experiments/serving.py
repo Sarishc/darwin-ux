@@ -14,7 +14,9 @@ Before serving, the stored spec is re-hashed and must equal the experiment's
 hash for that variant: a candidate that is not exactly what Step 13 evaluated
 is never served. Both variants travel the same path (fetch -> validate ->
 render), so neither arm gets a faster or different loading experience.
-A paused experiment serves nothing: new and returning sessions see Generation 0.
+A paused experiment serves nothing: new and returning sessions see the active
+generation. Neither does an experiment whose control is no longer the page's active
+generation (Step 15: e.g. after a rollback) — it is stale.
 """
 
 import logging
@@ -26,6 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from darwin.db.models import Experiment, UISpecVersion
+from darwin.generations.active import active_spec
 from darwin.mutations.apply import content_hash
 
 from .assignment import assign
@@ -40,6 +43,7 @@ class Served:
     experiment_key: str | None = None
     variant: Variant | None = None
     spec_hash: str | None = None
+    spec_version_id: uuid.UUID | None = None
     spec: dict[str, Any] | None = None
     reason: FallbackReason | None = None
 
@@ -58,6 +62,15 @@ def resolve_variant(session: Session, session_id: uuid.UUID, page_id: str) -> Se
     if experiment is None:
         return Served("none")
     key = experiment.experiment_key
+    current = active_spec(session, page_id)
+    if current is not None and current.id != experiment.control_spec_id:
+        # The control is no longer the page's active generation (e.g. after a rollback):
+        # the experiment is stale. Serve the active generation; record no exposure.
+        logger.warning(
+            "experiment control is not the active generation",
+            extra={"context": {"experiment_key": key}},
+        )
+        return Served("none")
     try:
         variant = assign(key, session_id, experiment.candidate_allocation_bp)
     except Exception:  # noqa: BLE001 — any assignment problem serves control, never candidate
@@ -72,4 +85,4 @@ def resolve_variant(session: Session, session_id: uuid.UUID, page_id: str) -> Se
         return _fallback(key, "spec_unavailable")
     if row.content_hash != expected or content_hash(row.spec) != expected:
         return _fallback(key, "spec_hash_mismatch")
-    return Served("assigned", key, variant, expected, dict(row.spec))
+    return Served("assigned", key, variant, expected, row.id, dict(row.spec))

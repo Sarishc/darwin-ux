@@ -3,7 +3,8 @@
 Checked, in order (the first failure ends the evaluation as `reject`,
 status provenance_failed, with no harness call):
 
-  candidate row is a candidate; its parent exists and is a baseline;
+  candidate row is a candidate; its parent exists and is a generation (a baseline
+  or, since Step 15, a promoted generation);
   both stored content hashes match their content (nothing was altered);
   candidate_for_generation = parent.generation + 1 = candidate.spec.generation;
   a SUCCEEDED MutationRun points at this candidate from this parent (the one
@@ -65,7 +66,7 @@ def load_context(
     if candidate.status != "candidate" or candidate.parent_id is None:
         raise ProvenanceError("not_a_candidate")
     parent = session.get(UISpecVersion, candidate.parent_id)
-    if parent is None or parent.status != "baseline" or parent.generation is None:
+    if parent is None or parent.status not in ("baseline", "promoted") or parent.generation is None:
         raise ProvenanceError("parent_not_a_baseline")
     if content_hash(candidate.spec) != candidate.content_hash:
         raise ProvenanceError("candidate_hash_mismatch")

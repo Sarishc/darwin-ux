@@ -45,6 +45,7 @@ class AssignmentResponse(BaseModel):
     experiment_key: str | None = None
     variant: Variant | None = None
     spec_hash: str | None = None
+    spec_version_id: uuid.UUID | None = None  # for telemetry attribution (Step 15)
     spec: dict[str, Any] | None = None
     reason: FallbackReason | None = None
 
@@ -69,6 +70,7 @@ def assignment(body: AssignmentRequest, factory: Factory) -> AssignmentResponse:
         experiment_key=served.experiment_key,
         variant=served.variant,
         spec_hash=served.spec_hash,
+        spec_version_id=served.spec_version_id,
         spec=served.spec,
         reason=served.reason,
     )

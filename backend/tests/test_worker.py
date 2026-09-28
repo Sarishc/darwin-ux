@@ -249,7 +249,7 @@ def test_processing_stores_then_reconciles_even_for_a_duplicate(
 
 def test_invalid_message_is_permanent_and_touches_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(service, "ingest_event", lambda *a: pytest.fail("must not store"))
-    body = {**_message_body(), "schema_version": 2, "payload": {"secret": "hunter2"}}
+    body = {**_message_body(), "schema_version": 3, "payload": {"secret": "hunter2"}}
 
     with pytest.raises(PermanentMessageError) as error:
         service.process_telemetry_message(Session(), body)

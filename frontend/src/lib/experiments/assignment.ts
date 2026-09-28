@@ -18,6 +18,7 @@
 import { z } from "zod";
 
 import { EXPERIMENT_KEY_PATTERN, SPEC_HASH_PATTERN } from "@/lib/telemetry/client";
+import { UUID_PATTERN } from "@/lib/telemetry/uuid";
 
 export const ASSIGNMENT_PATH = "/api/v1/experiments/assignment";
 export const ASSIGNMENT_TIMEOUT_MS = 3000;
@@ -32,6 +33,7 @@ export const assignmentResponse = z.discriminatedUnion("status", [
       experiment_key: experimentKey,
       variant: z.enum(["control", "candidate"]),
       spec_hash: z.string().regex(SPEC_HASH_PATTERN),
+      spec_version_id: z.string().regex(UUID_PATTERN).optional(), // telemetry attribution
       spec: z.unknown(), // validated by the caller with the real UI Spec schema
     })
     .strict(),

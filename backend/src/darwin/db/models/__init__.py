@@ -10,6 +10,12 @@ from darwin.db.models.experiment import (
     ExperimentExposure,
     ExperimentLifecycleEvent,
 )
+from darwin.db.models.generation import (
+    ActiveGeneration,
+    GenerationPromotion,
+    GenerationRollback,
+    PromotionApproval,
+)
 from darwin.db.models.hypothesis import Hypothesis, HypothesisRun
 from darwin.db.models.knowledge import KnowledgeChunk, KnowledgeDocument, RetrievalRun
 from darwin.db.models.mutation import MutationRun, UISpecVersion
@@ -18,6 +24,7 @@ from darwin.db.models.research import ResearchRun, ResearchStep
 from darwin.db.models.user_event import UserEvent
 
 __all__ = [
+    "ActiveGeneration",
     "BehaviorSignal",
     "CandidateEvaluationRun",
     "DecisionRun",
@@ -25,11 +32,14 @@ __all__ = [
     "ExperimentAnalysis",
     "ExperimentExposure",
     "ExperimentLifecycleEvent",
+    "GenerationPromotion",
+    "GenerationRollback",
     "Hypothesis",
     "HypothesisRun",
     "KnowledgeChunk",
     "KnowledgeDocument",
     "MutationRun",
+    "PromotionApproval",
     "QueueMessage",
     "ResearchRun",
     "ResearchStep",

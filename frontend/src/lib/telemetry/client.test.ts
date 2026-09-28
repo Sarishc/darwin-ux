@@ -9,7 +9,14 @@ const options = { generation: 0, sessionId: () => SESSION };
 
 /** The backend TelemetryEvent contract (the backend remains the authority). */
 const BACKEND_EVENT_TYPE = /^[a-z][a-z0-9_]*$/;
-const BACKEND_FIELDS = ["event_id", "event_type", "occurred_at", "payload", "session_id"];
+const BACKEND_FIELDS = [
+  "event_id",
+  "event_type",
+  "occurred_at",
+  "payload",
+  "session_id",
+  "ui_generation", // Step 15 attribution claim (hash + version id only when served)
+];
 
 function okFetch() {
   return vi.fn(async () => new Response(null, { status: 202 }));
@@ -61,6 +68,37 @@ describe("event body", () => {
 
   it("drops events whose component is not a valid identifier", () => {
     expect(buildEventBody({ type: "button_click", component: "a b@c" }, options)).toBeNull();
+  });
+});
+
+describe("UI attribution (Step 15)", () => {
+  const event = { type: "button_click", component: "plan_team_pro_cta" } as const;
+  const hash = "e".repeat(64);
+  const id = "7c1e2f3a-4b5c-4d6e-8f90-a1b2c3d4e5f6";
+
+  it("claims the served spec's hash and version id next to the generation", () => {
+    const body = buildEventBody(event, {
+      ...options,
+      generation: 1,
+      specHash: hash,
+      specVersionId: id,
+    });
+    expect(body?.ui_generation).toBe(1);
+    expect(body?.ui_spec_hash).toBe(hash);
+    expect(body?.ui_spec_version_id).toBe(id);
+  });
+
+  it.each([
+    [{}],
+    [{ specHash: hash }],
+    [{ specVersionId: id }],
+    [{ specHash: "not-a-hash", specVersionId: id }],
+    [{ specHash: hash, specVersionId: "not-a-uuid" }],
+  ])("claims only the generation without a valid server identity %#", (extra) => {
+    const body = buildEventBody(event, { ...options, ...extra });
+    expect(body?.ui_generation).toBe(0);
+    expect(body).not.toHaveProperty("ui_spec_hash");
+    expect(body).not.toHaveProperty("ui_spec_version_id");
   });
 });
 

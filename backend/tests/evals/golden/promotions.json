@@ -1,0 +1,479 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "approve_clean",
+      "group": "eligible",
+      "scenario": "approve_clean",
+      "description": "A completed, evidence_ready experiment with guardrails ok on a Step 13 pass candidate can be approved; approval alone changes nothing.",
+      "expected": {
+        "approved": true,
+        "active_generation": 0,
+        "promoted_rows": 0
+      }
+    },
+    {
+      "id": "promote_clean",
+      "group": "eligible",
+      "scenario": "promote_clean",
+      "description": "The approved candidate is promoted atomically: Generation 1 is a new promoted row equal to the candidate except generation; the candidate and Generation 0 are untouched.",
+      "expected": {
+        "approved": true,
+        "promoted": true,
+        "active_generation": 1,
+        "promoted_rows": 1,
+        "checks": true
+      }
+    },
+    {
+      "id": "sandbox_human_review",
+      "group": "ineligible",
+      "scenario": "sandbox_human_review",
+      "description": "A Step 13 human_review candidate is not eligible, even with a clean completed experiment (forged past the create gate).",
+      "expected": {
+        "reasons_include": [
+          "evaluation_not_pass"
+        ],
+        "approved": false,
+        "active_generation": 0,
+        "promoted_rows": 0,
+        "promoted": false
+      }
+    },
+    {
+      "id": "sandbox_reject",
+      "group": "ineligible",
+      "scenario": "sandbox_reject",
+      "description": "The harmful-but-safe Step 13 reject can never be approved.",
+      "expected": {
+        "reasons_include": [
+          "evaluation_not_pass"
+        ],
+        "approved": false,
+        "active_generation": 0,
+        "promoted_rows": 0,
+        "promoted": false
+      }
+    },
+    {
+      "id": "experiment_running",
+      "group": "ineligible",
+      "scenario": "experiment_running",
+      "description": "A running experiment cannot be approved.",
+      "expected": {
+        "reasons_include": [
+          "experiment_running",
+          "analysis_before_completion"
+        ],
+        "approved": false,
+        "active_generation": 0,
+        "promoted_rows": 0,
+        "promoted": false
+      }
+    },
+    {
+      "id": "experiment_paused",
+      "group": "ineligible",
+      "scenario": "experiment_paused",
+      "description": "A paused experiment cannot be approved.",
+      "expected": {
+        "reasons_include": [
+          "experiment_paused"
+        ],
+        "approved": false,
+        "active_generation": 0,
+        "promoted_rows": 0,
+        "promoted": false
+      }
+    },
+    {
+      "id": "insufficient_data",
+      "group": "ineligible",
+      "scenario": "insufficient_data",
+      "description": "Fewer exposed sessions than the floor: insufficient_data blocks approval.",
+      "expected": {
+        "reasons_include": [
+          "analysis_insufficient_data"
+        ],
+        "approved": false,
+        "active_generation": 0,
+        "promoted_rows": 0,
+        "promoted": false
+      }
+    },
+    {
+      "id": "needs_review",
+      "group": "ineligible",
+      "scenario": "needs_review",
+      "description": "Candidate render fallbacks make the analysis needs_review: blocked, no override.",
+      "expected": {
+        "reasons_include": [
+          "analysis_needs_review",
+          "analysis_integrity_flag"
+        ],
+        "approved": false,
+        "active_generation": 0,
+        "promoted_rows": 0,
+        "promoted": false
+      }
+    },
+    {
+      "id": "stop_recommended",
+      "group": "ineligible",
+      "scenario": "stop_recommended",
+      "description": "A guardrail breach (stop_recommended) blocks approval, whatever the primary metric says.",
+      "expected": {
+        "reasons_include": [
+          "analysis_stop_recommended",
+          "guardrails_not_ok"
+        ],
+        "approved": false,
+        "active_generation": 0,
+        "promoted_rows": 0,
+        "promoted": false
+      }
+    },
+    {
+      "id": "analysis_error",
+      "group": "ineligible",
+      "scenario": "analysis_error",
+      "description": "A failed analysis gives no evidence: blocked.",
+      "expected": {
+        "reasons_include": [
+          "analysis_error"
+        ],
+        "approved": false,
+        "active_generation": 0,
+        "promoted_rows": 0,
+        "promoted": false
+      }
+    },
+    {
+      "id": "candidate_hash_mismatch",
+      "group": "ineligible",
+      "scenario": "candidate_hash_mismatch",
+      "description": "An experiment whose stored candidate hash is not the candidate's content is blocked.",
+      "expected": {
+        "reasons_include": [
+          "experiment_spec_hash_mismatch"
+        ],
+        "approved": false,
+        "active_generation": 0,
+        "promoted_rows": 0,
+        "promoted": false
+      }
+    },
+    {
+      "id": "wrong_candidate",
+      "group": "ineligible",
+      "scenario": "wrong_candidate",
+      "description": "An experiment whose candidate is not the one its evaluation passed is blocked.",
+      "expected": {
+        "reasons_include": [
+          "candidate_mismatch"
+        ],
+        "approved": false,
+        "active_generation": 0,
+        "promoted_rows": 0,
+        "promoted": false
+      }
+    },
+    {
+      "id": "experiment_active_on_page",
+      "group": "ineligible",
+      "scenario": "experiment_active_on_page",
+      "description": "While another experiment runs on the page, no promotion may change its control.",
+      "expected": {
+        "reasons_include": [
+          "experiment_active_on_page"
+        ],
+        "approved": false,
+        "active_generation": 0,
+        "promoted_rows": 0,
+        "promoted": false
+      }
+    },
+    {
+      "id": "newer_reject_after_approval",
+      "group": "toctou",
+      "scenario": "newer_reject_after_approval",
+      "description": "A newer reject evaluation of the candidate after approval blocks promotion (re-checked at promotion time).",
+      "expected": {
+        "approved": true,
+        "promoted": false,
+        "active_generation": 0,
+        "promoted_rows": 0,
+        "reasons_include": [
+          "superseded_by_newer_evaluation"
+        ]
+      }
+    },
+    {
+      "id": "newer_analysis_after_approval",
+      "group": "toctou",
+      "scenario": "newer_analysis_after_approval",
+      "description": "If the approved analysis is no longer the latest one, the approval no longer authorises promotion.",
+      "expected": {
+        "approved": true,
+        "promoted": false,
+        "active_generation": 0,
+        "promoted_rows": 0,
+        "reasons_include": [
+          "analysis_not_latest"
+        ]
+      }
+    },
+    {
+      "id": "stale_source_generation",
+      "group": "toctou",
+      "scenario": "stale_source_generation",
+      "description": "Two approvals from Generation 0: after the first promotion the second is stale and refused.",
+      "expected": {
+        "approved": true,
+        "promoted": false,
+        "active_generation": 1,
+        "promoted_rows": 1,
+        "reasons_include": [
+          "stale_source_generation"
+        ]
+      }
+    },
+    {
+      "id": "duplicate_approval",
+      "group": "toctou",
+      "scenario": "duplicate_approval",
+      "description": "The same evidence cannot be approved twice.",
+      "expected": {
+        "approved": false,
+        "active_generation": 0,
+        "promoted_rows": 0,
+        "reasons_include": [
+          "duplicate_approval"
+        ]
+      }
+    },
+    {
+      "id": "replay_promotion",
+      "group": "toctou",
+      "scenario": "replay_promotion",
+      "description": "An approval can be executed once; replaying it is refused.",
+      "expected": {
+        "approved": true,
+        "promoted": false,
+        "active_generation": 1,
+        "promoted_rows": 1,
+        "reasons_include": [
+          "approval_already_used"
+        ]
+      }
+    },
+    {
+      "id": "confirmation_mismatch",
+      "group": "toctou",
+      "scenario": "confirmation_mismatch",
+      "description": "Promotion requires confirming the exact page and target generation.",
+      "expected": {
+        "approved": true,
+        "promoted": false,
+        "active_generation": 0,
+        "promoted_rows": 0,
+        "reasons_include": [
+          "confirmation_mismatch"
+        ]
+      }
+    },
+    {
+      "id": "rejected_after_approval",
+      "group": "toctou",
+      "scenario": "rejected_after_approval",
+      "description": "A later human rejection of the same evidence revokes the approval.",
+      "expected": {
+        "approved": true,
+        "rejected": true,
+        "promoted": false,
+        "active_generation": 0,
+        "promoted_rows": 0,
+        "reasons_include": [
+          "rejected_after_approval"
+        ]
+      }
+    },
+    {
+      "id": "reject_recorded_for_ineligible",
+      "group": "eligible",
+      "scenario": "reject_recorded_for_ineligible",
+      "description": "A human may always record a rejection (with the blocking reasons it saw); it changes nothing.",
+      "expected": {
+        "rejected": true,
+        "active_generation": 0,
+        "promoted_rows": 0,
+        "reasons_include": [
+          "analysis_insufficient_data"
+        ]
+      }
+    },
+    {
+      "id": "promotion_failure_atomic",
+      "group": "failure",
+      "scenario": "promotion_failure_atomic",
+      "description": "A crash inside the promotion transaction leaves no promoted row, no record and an unmoved pointer.",
+      "expected": {
+        "approved": true,
+        "promoted": false,
+        "active_generation": 0,
+        "promoted_rows": 0
+      }
+    },
+    {
+      "id": "rollback_to_generation_0",
+      "group": "rollback",
+      "scenario": "rollback_to_generation_0",
+      "description": "Rollback moves the pointer from Generation 1 back to Generation 0; Generation 1 and its promotion record remain.",
+      "expected": {
+        "rolled_back": true,
+        "active_generation": 0,
+        "promoted_rows": 1,
+        "checks": true
+      }
+    },
+    {
+      "id": "rollback_unknown_target",
+      "group": "rollback",
+      "scenario": "rollback_unknown_target",
+      "description": "A rollback to a generation that does not exist is refused.",
+      "expected": {
+        "rolled_back": false,
+        "active_generation": 1,
+        "reasons_include": [
+          "target_not_a_generation"
+        ]
+      }
+    },
+    {
+      "id": "rollback_at_generation_0",
+      "group": "rollback",
+      "scenario": "rollback_at_generation_0",
+      "description": "Generation 0 has nothing earlier to roll back to.",
+      "expected": {
+        "rolled_back": false,
+        "active_generation": 0,
+        "reasons_include": [
+          "no_earlier_generation"
+        ]
+      }
+    },
+    {
+      "id": "rollback_forward_refused",
+      "group": "rollback",
+      "scenario": "rollback_forward_refused",
+      "description": "Rollback only moves backwards; returning to Generation 1 needs a new promotion.",
+      "expected": {
+        "rolled_back": false,
+        "active_generation": 0,
+        "reasons_include": [
+          "target_not_earlier"
+        ]
+      }
+    },
+    {
+      "id": "candidate_as_rollback_target",
+      "group": "forgery",
+      "scenario": "candidate_as_rollback_target",
+      "description": "The database refuses a pointer at a candidate, even with a forged rollback record.",
+      "expected": {
+        "rolled_back": false,
+        "active_generation": 1,
+        "db_message": "the active generation must be a generation of this page"
+      }
+    },
+    {
+      "id": "pointer_without_record",
+      "group": "forgery",
+      "scenario": "pointer_without_record",
+      "description": "The database refuses a pointer move that names no matching promotion record.",
+      "expected": {
+        "promoted": false,
+        "active_generation": 0,
+        "db_message": "the pointer move does not match its promotion/rollback record"
+      }
+    },
+    {
+      "id": "record_without_pointer",
+      "group": "forgery",
+      "scenario": "record_without_pointer",
+      "description": "The database refuses a promotion record whose pointer move did not happen.",
+      "expected": {
+        "promoted": false,
+        "active_generation": 0,
+        "promoted_rows": 0,
+        "db_message": "generation_promotion record without the matching pointer move"
+      }
+    },
+    {
+      "id": "forged_promoted_row",
+      "group": "forgery",
+      "scenario": "forged_promoted_row",
+      "description": "A promoted generation row without a promotion record is refused at commit.",
+      "expected": {
+        "promoted": false,
+        "active_generation": 0,
+        "promoted_rows": 0,
+        "db_message": "a promoted generation needs a promotion record"
+      }
+    },
+    {
+      "id": "telemetry_generation_1",
+      "group": "telemetry",
+      "scenario": "telemetry_generation_1",
+      "description": "Events from the promoted Generation 1 are verified server-side, and their rage-click signal is attributed to Generation 1.",
+      "expected": {
+        "checks": true
+      }
+    },
+    {
+      "id": "telemetry_mixed_signal",
+      "group": "telemetry",
+      "scenario": "telemetry_mixed_signal",
+      "description": "A signal whose evidence spans Generation 0 and Generation 1 is 'mixed', never either.",
+      "expected": {
+        "checks": true
+      }
+    },
+    {
+      "id": "telemetry_legacy_unknown",
+      "group": "telemetry",
+      "scenario": "telemetry_legacy_unknown",
+      "description": "Events without attribution stay unknown; their signal is unknown (never assumed Generation 0).",
+      "expected": {
+        "checks": true
+      }
+    },
+    {
+      "id": "telemetry_unverified_claim",
+      "group": "telemetry",
+      "scenario": "telemetry_unverified_claim",
+      "description": "A spec id whose hash does not match is stored as a raw claim but not verified.",
+      "expected": {
+        "checks": true
+      }
+    },
+    {
+      "id": "active_api_follows_pointer",
+      "group": "telemetry",
+      "scenario": "active_api_follows_pointer",
+      "description": "The read-only active-generation API follows promotion and rollback, with a hash that matches its spec.",
+      "expected": {
+        "checks": true
+      }
+    },
+    {
+      "id": "active_api_failure_falls_back",
+      "group": "failure",
+      "scenario": "active_api_failure_falls_back",
+      "description": "If the database is unavailable the active-generation API answers none (the page renders bundled Generation 0).",
+      "expected": {
+        "checks": true
+      }
+    }
+  ]
+}
